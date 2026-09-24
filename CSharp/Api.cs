@@ -83,6 +83,14 @@ public static class Api
         app.MapGet("/assets", (string? snapshot, string? region, string? locale, string? bundle, string? prefix, string? resource_type, int? offset, int? limit) =>
             service.ListAssets(snapshot, prefix, resource_type, offset ?? 0, limit ?? 100, region, locale, bundle));
         app.MapPost("/exports", (ExportRequest request) => Accepted(service.StartExport(request)));
+        app.MapPost("/tasks/batches", (BatchRequest request) =>
+        {
+            var batch = service.StartBatch(request);
+            return Results.Accepted($"/tasks/batches/{batch.Id}", batch);
+        });
+        app.MapGet("/tasks/batches", (int? offset, int? limit) => service.ListBatches(offset ?? 0, limit ?? 100));
+        app.MapGet("/tasks/batches/{id}", (string id) => service.GetBatch(id));
+        app.MapPost("/tasks/batches/{id}/cancel", (string id) => service.CancelBatch(id));
         app.MapGet("/tasks/{id}", (string id) => service.GetTask(id) is { } task ? Results.Json(task, Json.Options) : Results.NotFound(new { error = "Task not found" }));
         app.MapPost("/tasks/{id}/cancel", (string id) => Results.Json(service.Cancel(id), Json.Options));
         app.MapGet("/exports/{id}", (string id) => service.Manifest(id) is { } manifest ? Results.Json(manifest, Json.Options) : Results.NotFound(new { error = "Export not found" }));

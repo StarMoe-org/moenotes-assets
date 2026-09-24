@@ -77,3 +77,10 @@ makes the publication visible; startup removes orphan blobs after acquiring the
 exclusive store lock. Old C# export file paths remain readable. Catalog history
 and referenced blobs have no eviction policy. Cross-snapshot output deduplication
 saves storage but does not eliminate first downloads or repeated worker decoding.
+
+The batch scheduler stores ordered plans and child task IDs in SQLite. A single
+channel consumer executes FIFO batches and pins each export to its refresh
+snapshot. Recovery retries interrupted steps, reuses completed children/outputs,
+and preserves explicit cancellation. Shutdown drains the scheduler before closing
+the store. Batch cancellation drains its child before advancing to another batch.
+Standalone tasks still use the original concurrent admission and worker gates.

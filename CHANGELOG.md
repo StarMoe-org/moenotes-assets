@@ -38,3 +38,5 @@ changes require explicit release notes; a frozen stable API is not claimed.
   from the C# branch; retain notices for code adapted into the C# implementation.
 - Protect administrative HTTP routes with an environment-configured Bearer API
   key; disable them when unconfigured and keep browsing/files public.
+- Add persistent FIFO all-language refresh/export batches, queue inspection,
+  cancellation, restart recovery and throttled task progress logs.

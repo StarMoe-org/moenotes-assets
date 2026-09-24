@@ -187,3 +187,17 @@ automatic eviction. Changed versions therefore still grow storage over time.
 Content-addressed outputs deduplicate disk bytes after extraction; they do not
 promise to skip cross-snapshot downloads or repeated decoding. Metadata candidate
 hashes alone never authorize reusing unverified remote content.
+
+## One-request all-language processing
+
+`POST /tasks/batches` with `{"region":"tw"}` and the administrative Bearer key
+queues refresh + export for every configured language. Batches run FIFO, one at
+a time. Use `{"region":"tw","export":false}` for catalog-only indexing.
+Inspect `/tasks/batches/{id}` and its child `/tasks/{task_id}` progress; cancel at
+`POST /tasks/batches/{id}/cancel`. All queue routes require `MOENOTES_API_KEY`.
+
+Queue state lives in SQLite under `/data`; unfinished batch steps resume after
+restart while completed steps/exports are reused. Failed languages do not stop
+the remaining languages. Direct single-language endpoints retain their existing
+concurrency behavior. Zeabur logs show batch language/phase and throttled export
+progress with success/failure counts. See [API](docs/API.md) for limits and details.

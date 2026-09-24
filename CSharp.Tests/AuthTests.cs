@@ -20,13 +20,13 @@ public class AuthTests
         await app.StartAsync();
         using var http = new HttpClient { BaseAddress = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single()) };
         var rejected = key.Length == 0 ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.Unauthorized;
-        foreach (var path in new[] { "/catalog/refresh", "/exports", "/bundles/verify", "/tasks/unknown/cancel" })
+        foreach (var path in new[] { "/catalog/refresh", "/exports", "/bundles/verify", "/tasks/unknown/cancel", "/tasks/batches", "/tasks/batches/unknown/cancel" })
         {
             using var response = await http.PostAsync(path, null);
             Assert.Equal(rejected, response.StatusCode);
             Assert.True(response.Headers.CacheControl!.NoStore);
         }
-        foreach (var path in new[] { "/tasks/unknown", "/TASKS/unknown/", "/storage", "/STORAGE/" })
+        foreach (var path in new[] { "/tasks/unknown", "/TASKS/unknown/", "/storage", "/STORAGE/", "/tasks/batches", "/tasks/batches/unknown" })
             Assert.Equal(rejected, (await http.GetAsync(path)).StatusCode);
         using (var request = new HttpRequestMessage(HttpMethod.Head, "/tasks/unknown"))
             Assert.Equal(rejected, (await http.SendAsync(request)).StatusCode);

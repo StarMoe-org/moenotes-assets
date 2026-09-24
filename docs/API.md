@@ -142,3 +142,52 @@ unique_bundle_definitions, unique_asset_definitions, sqlite_main_bytes,
 logical_output_bytes, referenced_output_bytes, deduplicated_output_bytes,
 reserved_temp_bytes. SQLite main bytes exclude WAL/SHM; output counters exclude
 catalogs and metadata. Temporary bytes are reservations, not a disk measurement.
+
+## Sequential all-language queue
+
+Submit once to refresh and export every configured language in order:
+
+```sh
+curl -X POST https://YOUR_HOST/tasks/batches \
+  -H "Authorization: Bearer $MOENOTES_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"region":"tw"}'
+```
+
+The response is 202 with a batch `id` and Location. Defaults: `locales` uses the
+region's configured language list, `export=true`, `prefix=""` (all resources).
+For catalog-only work, send `{"region":"tw","export":false}`. To limit export
+scope, send e.g. `{"region":"tw","locales":["en","ja"],"prefix":"Live/MusicScore/"}`.
+The request must be a JSON object; `{}` uses all defaults.
+
+- `GET /tasks/batches?offset=0&limit=100`: summaries in FIFO sequence order,
+  including active_task; pagination limit 1–1000.
+- `GET /tasks/batches/{id}`: region/version/prefix/state and ordered steps with
+  locale, phase, state, task_id, snapshot and error.
+- `GET /tasks/{step.task_id}`: resource-level completed/total/results for a child.
+- `POST /tasks/batches/{id}/cancel`: cancel pending steps and the active child;
+  retain completed exports. Cancellation drains the child before the next batch.
+
+All these routes require the administrative Bearer key. Batch states are queued,
+running, succeeded, partial, failed, cancelled. Steps additionally use skipped.
+One batch runs at a time; each language refreshes then exports before the next.
+A failed refresh skips its export and continues to the next language. Resource
+failures remain in child task results. Every configured language is included;
+unsupported/local resources can still fail. Full exports may require substantial
+network, CPU and output storage despite output deduplication.
+
+The SQLite-backed FIFO survives restarts: completed steps are retained, interrupted
+steps are retried, and completed outputs are reused. Export retries use the
+snapshot selected by their refresh step. Explicitly cancelled batches do not
+resume. This behavior is specific to batch submissions; standalone interrupted
+tasks remain failed. Existing standalone endpoints can still run concurrently
+within the same worker/download limits. Submit bulk work through this queue to
+serialize it. `queue_limit` caps nonterminal batches; excess submissions return
+429. Duplicate submissions create separate queued batches.
+
+Zeabur/container logs include batch admission/start/step/end and child task status.
+Export progress is checkpointed/logged after every 20 completed resources or on a
+resource completion after at least 10 seconds since the last update. A single
+long-running resource can therefore leave counts unchanged for longer than 10
+seconds. Terminal task logs include final completed/total and failure counts.
+Logs go to stderr so CLI JSON on stdout remains usable; API keys are never logged.

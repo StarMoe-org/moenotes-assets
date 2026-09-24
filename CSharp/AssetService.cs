@@ -5,7 +5,7 @@ using System.Text;
 using static MoenotesAssets.Config;
 namespace MoenotesAssets;
 
-public sealed class AssetService : IAsyncDisposable
+public sealed partial class AssetService : IAsyncDisposable
 {
     public Config Config { get; }
     public Store Store { get; }
@@ -54,6 +54,7 @@ public sealed class AssetService : IAsyncDisposable
             downloads = new(config.Downloads); workers = new(config.Workers); videos = new(config.Videos); queue = new(config.QueueLimit);
             Budget = new(config.TempBytes);
             downloadWork = new(d => { try { RemoveTree(d.Directory); } finally { d.Reservation.Dispose(); } });
+            InitializeBatches();
         }
         catch { Store?.Dispose(); instance.Dispose(); throw; }
     }
@@ -115,15 +116,17 @@ public sealed class AssetService : IAsyncDisposable
         catch { cancellation.Dispose(); queue.Release(); throw; }
         var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         running[task.Id] = completion.Task;
+        Console.Error.WriteLine($"[task {task.Id}] queued kind={kind} total={total}");
         _ = Task.Run(async () =>
         {
             var result = task with { State = "running", Updated = Now };
-            try { Store.Put("task", task.Id, result); result = await operation(result, cancellation.Token); }
+            try { Store.Put("task", task.Id, result); Console.Error.WriteLine($"[task {task.Id}] running kind={kind}"); result = await operation(result, cancellation.Token); }
             catch (Exception e) { result = result with { State = cancellation.IsCancellationRequested ? "cancelled" : "failed", Error = e.Message }; }
             finally
             {
                 try { Store.Put("task", task.Id, result with { Updated = Now }); }
                 catch (Exception e) { Console.Error.WriteLine($"Task persistence failed: {e.Message}"); }
+                Console.Error.WriteLine($"[task {task.Id}] {result.State} kind={kind} progress={result.Completed}/{result.Total} failed={result.Results.Count(r => r.Error != null)}");
                 cancellations.TryRemove(task.Id, out _); cancellation.Dispose(); queue.Release();
                 running.TryRemove(task.Id, out _); completion.SetResult();
             }
@@ -184,6 +187,7 @@ public sealed class AssetService : IAsyncDisposable
         return Start("export", snapshot.Id, keys.Length, async (task, token) =>
         {
             var results = new List<ItemResult>();
+            var progress = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 await Parallel.ForEachAsync(keys, new ParallelOptions { MaxDegreeOfParallelism = Config.Downloads, CancellationToken = token }, async (key, ct) =>
@@ -204,14 +208,19 @@ public sealed class AssetService : IAsyncDisposable
                     lock (results)
                     {
                         results.Add(item);
-                        task = task with { Completed = results.Count, Results = results.OrderBy(r => r.Key, StringComparer.Ordinal).ToArray(), Updated = Now };
-                        if (results.Count % 20 == 0) Store.Put("task", task.Id, task);
+                        if (results.Count % 20 == 0 || progress.Elapsed >= TimeSpan.FromSeconds(10))
+                        {
+                            task = task with { Completed = results.Count, Results = results.OrderBy(r => r.Key, StringComparer.Ordinal).ToArray(), Updated = Now };
+                            Store.Put("task", task.Id, task);
+                            Console.Error.WriteLine($"[task {task.Id}] export region={snapshot.Region} locale={snapshot.Locale} progress={results.Count}/{keys.Length} succeeded={results.Count(r => r.ExportId != null)} failed={results.Count(r => r.Error != null)}");
+                            progress.Restart();
+                        }
                     }
                 });
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { }
             var successes = results.Count(r => r.ExportId != null);
-            return task with { State = token.IsCancellationRequested ? "cancelled" : successes == keys.Length ? "succeeded" : successes > 0 ? "partial" : "failed" };
+            return task with { Completed = results.Count, Results = results.OrderBy(r => r.Key, StringComparer.Ordinal).ToArray(), State = token.IsCancellationRequested ? "cancelled" : successes == keys.Length ? "succeeded" : successes > 0 ? "partial" : "failed" };
         });
     }
     private async Task<Download> DownloadOne(Snapshot snapshot, Location location, CancellationToken token)
@@ -353,7 +362,7 @@ public sealed class AssetService : IAsyncDisposable
     public Manifest? Manifest(string id) => Store.Get<Manifest>("export", id);
     public async ValueTask DisposeAsync()
     {
-        shutdown.Cancel(); await Task.WhenAll(running.Values.ToArray());
+        shutdown.Cancel(); await batchRunner; await Task.WhenAll(running.Values.ToArray());
         // Shared producers may still be unwinding after their last waiter cancelled.
         await exportWork.Drain(); await downloadWork.Drain();
         http.Dispose(); Store.Dispose(); instance.Dispose(); shutdown.Dispose();
