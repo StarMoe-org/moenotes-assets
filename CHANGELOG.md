@@ -17,3 +17,20 @@ Versions follow MAJOR.MINOR.PATCH, with prerelease identifiers where applicable.
 
 The HTTP v1 interface and Rust library are experimental in this alpha. Breaking
 changes require explicit release notes; a frozen stable API is not claimed.
+
+## 0.2.0-csharp (unreleased)
+
+- Reimplement the service and CLI in C# on .NET 10; default CI and container use .NET.
+- Redesign HTTP routes without the `/v1` prefix; CLI refresh/export wait for completion.
+- Add UnityFS/TextAsset/PNG/Sprite/atlas and embedded ACB/HCA/USM export in C#.
+- Persist tasks and manifests in a separate SQLite store; retain shared work,
+  cancellation, atomic publication and conditional/range file downloads.
+- Reject legacy Rust data directories before cleanup; use a new directory.
+- Add synthetic pipeline and loopback HTTP integration tests.
+- Add API-only bundle/asset browsing, per-region/language/version snapshots,
+  SQL diffs with explicit evidence and download/hash verification tasks.
+- Share catalog graphs and descriptor definitions in SQLite; store final files
+  by content SHA256 while retaining independent scoped manifests.
+- Add configurable frontend CORS and storage statistics; retain automatic
+  temporary cleanup without automatic history/output eviction.
+- Validate five live TW language catalogs and small download/export samples.

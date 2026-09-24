@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/CSharp.Tests/">
+    <Project Path="CSharp.Tests/MoenotesAssets.Tests.csproj" />
+  </Folder>
+  <Folder Name="/CSharp/">
+    <Project Path="CSharp/MoenotesAssets.csproj" />
+  </Folder>
+</Solution>

@@ -26,3 +26,19 @@ ffprobe = "ffprobe"
 cri_key = 8594927479
 # Test fixtures only. HTTPS remains required for non-loopback hosts.
 allow_loopback_http = false
+
+# Optional override for stripped Unity type trees; otherwise use the embedded package.
+# class_data = "/path/to/classdata.tpk"
+
+# Optional external browser frontend (exact origins, no trailing slash).
+# cors_origins = ["http://localhost:3000"]
+# locales = ["zh-Hans", "zh-Hant", "en", "ko", "ja"]
+
+# Optional region array; top-level region must identify a configured entry.
+# When omitted, the top-level cdn_root defines the only region.
+# [[regions]]
+# id = "hk"
+# cdn_root = "https://cdn.example.invalid/prod/your-region"
+# locale = "zh-Hant"
+# locales = ["zh-Hans", "zh-Hant", "en", "ko", "ja"]
+# bili_version = "main"

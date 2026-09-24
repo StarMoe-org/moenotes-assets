@@ -2,3 +2,10 @@
 /data/
 /config.toml
 *.log
+**/bin/
+**/obj/
+/.migration-tools/
+/TestResults/
+/artifacts/
+/CSharp/data/
+/config.docker.toml

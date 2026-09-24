@@ -10,7 +10,7 @@ files, SQLite files, or working directories while the service runs. Configure a
 container memory limit, filesystem quota and PID limit as additional boundaries.
 Worker resource limits and separate processes are not a security sandbox.
 
-The worker and media-exec commands are internal process interfaces, not exposed
+The worker command is an internal process interface, not exposed
 through HTTP. Configure CDN roots and executable paths only from trusted sources.
 Downloads do not follow redirects or inherit proxy variables. Export names are
 service-generated; asset labels are untrusted metadata, not filesystem paths.

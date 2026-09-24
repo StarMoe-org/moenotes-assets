@@ -5,3 +5,8 @@
 *.yml text eol=lf
 # Preserve upstream notices byte-for-byte, including line endings and whitespace.
 third_party/licenses/** -text -whitespace
+*.cs text eol=lf
+*.csproj text eol=lf
+*.slnx text eol=lf
+*.json text eol=lf
+*.tpk binary

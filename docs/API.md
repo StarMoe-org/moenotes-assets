@@ -1,63 +1,127 @@
-# HTTP API v1
+# HTTP API — C# edition
 
-Base URL: `http://127.0.0.1:8091`. No authentication. Requests use JSON; application
-errors contain an `error` string. This alpha API is experimental. Paths identify
-opaque service IDs, never arbitrary local paths or URLs.
+Base URL: `http://127.0.0.1:8091`. JSON uses snake_case. No `/v1` prefix,
+HTTP authentication or built-in browser UI; `/` returns 404. An external frontend
+can use `cors_origins = ["http://localhost:3000"]` in TOML (exact origins).
 
-| Method and path | Result |
-|---|---|
-| GET /healthz | Liveness |
-| GET /readyz | SQLite/storage readiness and reserved temporary bytes |
-| POST /v1/catalogs/refresh | 202, catalog-refresh task |
-| GET /v1/catalogs | Retained snapshots and current flag |
-| GET /v1/assets | Logical keys and types |
-| POST /v1/exports | 202, export task; completed work is reused |
-| GET /v1/tasks/{id} | Task state and per-resource results |
-| POST /v1/tasks/{id}/cancel | Request cancellation, safe for completed tasks |
-| GET /v1/exports/{id} | Published manifest |
-| GET or HEAD /v1/files/{id} | Immutable file, Range and ETag supported |
+| Method | Path | Result |
+|---|---|---|
+| GET | /health, /ready | Liveness / SQLite and temporary storage readiness |
+| GET | /regions | Configured IDs, default_locale and locales |
+| POST | /catalog/refresh?region=tw&locale=en&version=main | 202 catalog task |
+| GET | /catalogs?region=tw&locale=en | Retained snapshot statistics |
+| GET | /bundles | BundlePage |
+| GET | /bundles/{id} | Bundle descriptor and observed hashes |
+| GET | /bundles/{id}/assets | AssetPage including transitive dependents |
+| GET | /bundles/{id}/equivalents | Candidate/verified matches in retained snapshots |
+| POST | /bundles/verify | 202 download/hash verification task |
+| GET | /assets | AssetPage |
+| GET | /diffs?from=SNAPSHOT_A&to=SNAPSHOT_B | Bundle diff |
+| GET | /storage | Index, output deduplication and temporary budget statistics |
+| POST | /exports | 202 export task |
+| GET | /tasks/{id} | Persisted task state |
+| POST | /tasks/{id}/cancel | Cancel; terminal tasks remain unchanged |
+| GET | /exports/{id} | Published manifest |
+| GET, HEAD | /files/{id} | File with Range, ETag and conditional requests |
 
-`GET /v1/assets` accepts `snapshot`, `prefix`, `resource_type`, `offset` (default
-0) and `limit` (default 100, capped at 1000). Supply a snapshot while paginating
-to avoid switching versions. Aliases sharing the same source are resolved to one
-logical asset; genuinely ambiguous keys are not offered as exportable entries.
+## Selection and pagination
 
-`POST /v1/exports` accepts exactly one of a nonempty `keys` array or a `prefix`
-string, plus an optional `snapshot`. The empty prefix explicitly selects every
-catalog key, including unsupported resource classes; it is not the recommended
-way to export only supported assets. Use known prefixes. Keys are sorted and
-deduplicated. Nonexistent/unsupported keys produce resource-level failures.
+Bundle and asset routes accept `snapshot`, or `region` and `locale` to select the
+current snapshot for that scope's configured version. If omitted, configuration
+defaults apply. Explicit region/locale must agree with an explicit snapshot.
+Current pointers are independent per region/locale/version. To browse a different
+version, obtain its ID from `/catalogs` and pass `snapshot`. Pin that ID while
+paginating; refreshing retains previous snapshots.
 
-```json
-{"snapshot":"OPTIONAL_SNAPSHOT_ID","keys":["Live/MusicScore/0007/0007_03"]}
+Lists accept `prefix`, `offset` (default 0), and `limit` (default 100, capped at
+1000). Offset must be between 0 and 10000000; limit must be nonnegative.
+`/assets` also accepts `resource_type` and `bundle` (bundle ID).
+`/bundles/{id}/equivalents` accepts `limit`, not offset.
+
+```text
+GET /assets?region=tw&locale=en&prefix=Live%2FMusicScore%2F&limit=20
+GET /bundles?region=tw&locale=zh-Hant&limit=20
+GET /bundles/BUNDLE_ID/assets?snapshot=SNAPSHOT_ID
 ```
 
-Tasks expose `id`, `kind`, `state`, `snapshot`, `total`, `completed`, `results`,
-`error`, `created`, and `updated` (Unix seconds). Progress is checkpointed every
-20 completed resources and at task termination, rather than for every byte.
-States are `queued`, `running`,
-`succeeded`, `partial`, `failed`, or `cancelled`. Result entries have `key`,
-`export_id` and `error`. On cancellation, unstarted keys may be absent; completed
-published exports remain available. On restart, queued/running tasks become
-failed with an interruption message. There is no automatic retry loop.
+BundlePage: `{snapshot, offset, limit, total, bundles: [...]}`.
+AssetPage: `{snapshot, offset, limit, total, assets: [...]}`.
+Assets expose `key`, `resource_type`, `internal`, `ambiguous`. Ambiguous labels
+remain visible; they are not silently discarded or guaranteed exportable.
+Bundle membership includes dependency relationships, not just directly owned files.
 
-Manifests contain `id`, `snapshot`, `key`, `profile`, `sources` and `files`. Sources
-record downloaded InternalIds, provider/options, and original download SHA256.
-Each file has
-`id`, `name` (service-generated basename), `label` (original name), `media_type`,
-`bytes`, `sha256` and format-specific `metadata`. Labels are not unique; use IDs.
-Metadata may include dimensions, cue references, and ffprobe output.
+Bundles expose `id`, stable `key`, `bundle_name`, `internal`, `provider`,
+`resource_type`, `catalog_hash`, `crc`, `bytes`, `candidate_id`, `remote`,
+`download_sha256`, `plain_sha256`. The last two are null before observation.
+`remote=false` dependencies need local game files and cannot be downloaded here.
+Catalog statistics expose `snapshot`, `region`, `locale`, `version`, `created`,
+`current`, `content_sha256`, `bundles`, `assets`, `declared_bytes`,
+`remote_bundles`, `verified_bundles`. Inventory is not a full remote availability check.
 
-Equivalent export requests receive different task IDs but share active work and
-the same published export identity. GET never initiates downloads. Source identity
-includes region/CDN/version/locale/catalog SHA256; export identity also includes
-the format profile. Catalog remote hash is an update hint, not an independently
-verified cryptographic checksum.
+## Diffs and verification
 
-Missing records return 404, exhausted task queue returns 429, and invalid requests
-return 400. HTTP parsing/body-limit failures use Axum's corresponding 4xx status.
-Operational export failures appear in task results, not as an empty success.
-File responses may return 206, 304 or 416. Mismatched If-Range falls back to a full
-response. Missing physical files return 404 even with a matching conditional
-header; error responses are not immutable cache entries. There is no
-DELETE/automatic eviction endpoint in this alpha.
+`/diffs` accepts `prefix`, `offset`, `limit`, `include_unchanged` (default false).
+Response: `{from, to, kind, summary, offset, limit, entries}`. Kind is `region`,
+`locale`, or `version`, based on scope differences. Each entry contains `key`,
+`change`, `evidence`, `from_id`, `to_id`, `from_count`, `to_count`.
+Summary counts all matching stable-key groups before pagination or exclusion of
+unchanged entries: `added`, `removed`, `changed`, `unchanged`, `ambiguous`, `unknown`.
+Multiple descriptors sharing a key are ambiguous; representative IDs must not be
+interpreted as a unique match. Query bundles by key prefix to inspect candidates.
+
+Keys use the Android-relative path with the known catalog hash suffix removed
+from bundle filenames. Hash128 + size + CRC + provider family supplies candidate
+identity. This is metadata evidence, not proof that bytes match or a claim that
+Hash128 is a raw-file MD5. Zero/empty catalog hashes cannot establish identity.
+When both plaintext SHA256 observations exist they override candidate metadata.
+Diff evidence is `verified_plain_sha256`, `catalog_metadata`, or `inventory`.
+Equivalents return snapshot/region/locale/id/key/evidence; evidence is
+`catalog_candidate`, `verified_plain_sha256`, or `conflicting_plain_sha256`.
+
+```json
+{"ids":["BUNDLE_ID"],"snapshot":"SNAPSHOT_ID"}
+```
+
+Send this body to `/bundles/verify` (1–1000 IDs). Alternatively select with
+`region` and `locale`. Verification downloads and decrypts sources, records raw
+and plaintext SHA256, then releases temporary files. It does not decode every
+asset or keep a permanent raw-bundle cache. Filename-dependent encryption can
+make raw hashes unsuitable for identifying equal plaintext across sources.
+
+## Exports and tasks
+
+`POST /exports` takes exactly one of nonempty `keys` or a `prefix` string, plus
+optional `snapshot`, `region`, `locale`. Unknown JSON members are rejected.
+An empty prefix selects all keys, including unsupported classes. Keys are sorted
+and deduplicated; missing/unsupported assets fail individually.
+
+```json
+{"keys":["Live/MusicScore/0001/0001_00"],"region":"tw","locale":"en"}
+```
+
+POST work requests return the task and a Location header. Tasks expose `id`,
+`kind`, `state`, `snapshot`, `total`, `completed`, `results`, `error`, `created`,
+`updated`. Times are Unix seconds. States: queued, running, succeeded, partial,
+failed, cancelled. Export results contain `key`, `export_id`, `error`.
+Cancellation retains already published outputs. Restart fails unfinished tasks;
+there is no automatic retry. Operational failures appear in task results.
+
+Manifests contain `id`, `snapshot`, `region`, `key`, `profile`, `sources`, `files`.
+Sources include `location`, `download_sha256`, `plain_sha256`. Files include
+`id`, `name`, `label`, `media_type`, `bytes`, `sha256`, `metadata`. Labels preserve
+source names; names are generated. Metadata includes image/cue/media information.
+Separate snapshot manifests can point to the same content-addressed file bytes.
+Each request has its own task; identical snapshot/key/profile exports are reused.
+Profile: `csharp-json-png-aac-h264-v1`.
+
+Missing records return 404; exhausted queue 429; invalid requests 400. Body limit
+is 2 MiB. Files support 206/304/416; mismatched If-Range sends the full file.
+Missing physical files return 404 before conditional processing. Successful files
+have immutable cache headers. GET never enqueues downloads or reparses catalogs.
+No deletion or automatic history/export eviction endpoints are provided.
+
+`/storage` reports snapshots, unique_catalogs, indexed_bundle_rows,
+unique_bundle_definitions, unique_asset_definitions, sqlite_main_bytes,
+logical_output_bytes, referenced_output_bytes, deduplicated_output_bytes,
+reserved_temp_bytes. SQLite main bytes exclude WAL/SHM; output counters exclude
+catalogs and metadata. Temporary bytes are reservations, not a disk measurement.
