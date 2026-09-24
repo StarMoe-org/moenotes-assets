@@ -32,7 +32,7 @@ public sealed partial class AssetService : IAsyncDisposable
         instance = new FileStream(Path.Combine(Config.DataDir, "instance.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         try
         {
-            foreach (var name in new[] { "tmp", "exports", "catalogs", "blobs" })
+            foreach (var name in new[] { "tmp", "exports", "catalogs", "blobs", "public" })
             {
                 var path = Path.Combine(Config.DataDir, name);
                 Require(!Directory.Exists(path) || !File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint), "Symlink storage directory");
@@ -337,7 +337,7 @@ public sealed partial class AssetService : IAsyncDisposable
                 stage = Path.Combine(Config.DataDir, "tmp", "reuse-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(stage);
                 await File.WriteAllTextAsync(Path.Combine(stage, "manifest.json"), Json.Write(reused), token);
                 token.ThrowIfCancellationRequested(); Directory.Move(stage, destination); moved = true;
-                Store.Publish(reused, true); moved = false; return reused;
+                Store.Publish(reused, true); moved = false; MaterializePaths(reused); return reused;
             }
             stage = Path.Combine(Config.DataDir, "tmp", "job-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(stage);
             var output = Path.Combine(stage, "out");
@@ -372,7 +372,7 @@ public sealed partial class AssetService : IAsyncDisposable
             foreach (var file in files) Blobs.Publish(Path.Combine(output, file.Name), file.Sha256, file.Bytes);
             await File.WriteAllTextAsync(Path.Combine(output, "manifest.json"), Json.Write(manifest), token);
             token.ThrowIfCancellationRequested(); Directory.Move(output, destination); moved = true;
-            Store.Publish(manifest, true); moved = false;
+            Store.Publish(manifest, true); moved = false; MaterializePaths(manifest);
             Store.Put("conversion", conversionId, manifest.Id); return manifest;
         }
         finally

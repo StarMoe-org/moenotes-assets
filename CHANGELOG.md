@@ -87,3 +87,10 @@ changes require explicit release notes; a frozen stable API is not claimed.
   directly; writer-side `Get` parses JSON after releasing the lock. Path 404s are
   publicly cacheable for 60 seconds. Locally, reads during a long write went from
   97 to 3,638 requests/s (p50 2.9 s to 70 ms) and 304s stopped querying SQLite.
+- Serve paths from a static tree: publication hard-links files into
+  `public/{locale}/{key}/{label}{extension}` (newest snapshot wins, atomic renames,
+  owner in `.export.json`) and the static file middleware serves it. Existing exports
+  are backfilled in the background on first start; until then misses resolve from
+  SQLite. Locally, 304s went from 9,341 to 48,838 requests/s and 200s from 3,923 to
+  5,341; path 404s no longer touch SQLite. Names shared by different content are now
+  404 instead of 409.

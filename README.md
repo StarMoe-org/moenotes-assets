@@ -185,7 +185,8 @@ these files are ignored by Git. No account or player token is needed for the
 current catalog test. Relative `data_dir` is resolved against the config file.
 
 Persist the **whole `/data` directory** in Docker: `csharp.sqlite` (including live
-WAL/SHM), `catalogs/`, `blobs/`, and `exports/`. `tmp/` is transient and cleaned;
+WAL/SHM), `catalogs/`, `blobs/`, `exports/` and `public/` (hard links to blobs; keep it
+on the same filesystem). `tmp/` is transient and cleaned;
 keep staging on the same filesystem for atomic publication. Use the generated
 `config.docker.toml` as the read-only configuration mount in the example above.
 Region/language/version separation lives in SQLite and manifests, while identical

@@ -62,25 +62,32 @@ GET /ja/Cri/Sound/A_Abracadabra/A_Abracadabra.m4a
 GET /ja/Cri/Sound/adv_voice_mygo_001_1_01/          (listing)
 ```
 
-A path resolves against the scope's current snapshot first, then older retained
-snapshots, and uses the first one with a published export of the key. A catalog
-refresh therefore does not hide files until the new snapshot is exported. Because a
-path can move to newer content, responses carry `Cache-Control: public,max-age=600`
-and the content ETag; `/files/{id}` stays immutable. Range and conditional requests
-work as for `/files/{id}`.
+Paths are a static file tree. Publishing an export links its files into
+`/data/public/{locale}/{key}/{label}{extension}` as hard links to the content-addressed
+blobs (copies if the filesystem refuses links), so identical files in several languages
+share one blob and requests are served by the static file middleware without SQLite.
+Each link is created under a dot-prefixed temporary name and renamed into place; the
+owning snapshot is recorded in the directory's `.export.json`. Dot files are never
+served. A key's directory belongs to the newest snapshot that has published it, so a
+catalog refresh does not hide files until the new snapshot is exported, and an older
+export never overwrites a newer one.
 
-The listing returns `{locale,key,snapshot,files}`; each file has `path`, `file`
-(`/files/{id}`), `label`, `media_type`, `bytes`, `sha256` and `metadata`. When files
-with different content share a label and extension, their `path` is null and the
-path itself answers 409; use their `file` URLs. Labels containing `/` have no path.
-Unknown locales, keys without a published export and unknown names are 404 with
-`Cache-Control: public,max-age=60`. Path routes never start downloads or exports.
+Path responses carry `Cache-Control: public,max-age=600`, an ETag and Range/conditional
+support from the static file middleware; `/files/{id}` stays immutable. Unknown
+locales, keys without a published export, unknown names and names shared by files with
+different content (not linked) are 404 with `Cache-Control: public,max-age=60`. Path
+routes never start downloads or exports.
 
-Resolutions, including misses, are cached in memory and validated against store
-versions on each hit: a publish invalidates its key and a catalog index invalidates
-all paths, so new exports are visible at once. Hits and 304 responses do not touch
-SQLite. Request-path reads (`/files/{id}`, `/exports/{id}`, path routes) use pooled
-read-only SQLite connections, which WAL lets run concurrently with the writer.
+`GET /{locale}/{key}/` returns `{locale,key,snapshot,files}` from SQLite (cached); each
+file has `path` (null when not linked), `file` (`/files/{id}`), `label`, `media_type`,
+`bytes`, `sha256` and `metadata`.
+
+On first start after upgrading, and whenever a link fails, the service backfills the
+tree from all published exports in the background (logged as `[paths] backfilled N
+exports`). Until the backfill finishes, paths missing from the tree are resolved from
+SQLite through an in-memory cache. Request reads that do use SQLite (`/files/{id}`,
+`/exports/{id}`, listings) run on pooled read-only WAL connections, concurrently with
+the writer.
 
 ## Selection and pagination
 

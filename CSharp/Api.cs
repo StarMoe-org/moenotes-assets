@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.StaticFiles;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Net.Http.Headers;
 using System.Text.Json;
 using System.Security.Cryptography;
@@ -75,6 +77,50 @@ public static class Api
                 await context.Response.WriteAsJsonAsync(new { error = status == 500 ? "Internal service error" : exception.Message });
             }
         });
+        // Path routes: public/{locale}/{key}/{label}{ext} is a tree of hard links written at publication
+        // (AssetService.MaterializePaths), served as static files without SQLite. Paths follow the newest published
+        // export, so they get a short cache; /files/{id} stays immutable.
+        var contentTypes = new FileExtensionContentTypeProvider();
+        contentTypes.Mappings[".txt"] = contentTypes.Mappings[".sus"] = "text/plain; charset=utf-8";
+        app.UseStaticFiles(new StaticFileOptions
+        {
+            FileProvider = new PhysicalFileProvider(service.PublicRoot), // excludes dot-prefixed temporary links
+            ContentTypeProvider = contentTypes,
+            ServeUnknownFileTypes = true,
+            DefaultContentType = "application/octet-stream",
+            OnPrepareResponse = file => file.Context.Response.Headers.CacheControl = "public,max-age=600",
+        });
+        // What the tree cannot answer under a locale: /{locale}/{key}/ listings, misses before the backfill finishes
+        // (resolved from SQLite), and 404s, which are publicly cacheable so repeated misses stop at the CDN.
+        app.Use(async (context, next) =>
+        {
+            var request = context.Request; var parts = request.Path.Value!.Split('/', 3);
+            if (!(HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method)) || context.GetEndpoint() != null || parts.Length < 3 || !service.IsPathLocale(parts[1]))
+            {
+                await next(context); return;
+            }
+            var (locale, rest) = (parts[1], parts[2]);
+            IResult result;
+            if (rest.Length == 0 || rest.EndsWith('/'))
+            {
+                var listed = service.ResolvePath(locale, rest.TrimEnd('/'));
+                if (listed != null) context.Response.Headers.CacheControl = "public,max-age=60";
+                result = listed != null ? Results.Json(listed.Listing, Json.Options) : NotFound(context);
+            }
+            else
+            {
+                var slash = rest.LastIndexOf('/');
+                var resolved = !service.PublicTreeReady && slash > 0 ? service.ResolvePath(locale, rest[..slash]) : null;
+                result = resolved != null && resolved.Files.TryGetValue(rest[(slash + 1)..], out var file) && file != null
+                    ? ServeFile(context, file.Id, "public,max-age=600") : NotFound(context);
+            }
+            await result.ExecuteAsync(context);
+        });
+        static IResult NotFound(HttpContext context)
+        {
+            context.Response.Headers.CacheControl = "public,max-age=60";
+            return Results.NotFound(new { error = "No published file at this path" });
+        }
         app.MapGet("/health", () => new { status = "ok" });
         app.MapGet("/ready", () =>
         {
@@ -121,32 +167,6 @@ public static class Api
         app.MapPost("/bundles/verify", (VerifyRequest request) => Accepted(service.StartVerify(request)));
         app.MapGet("/diffs", (string from, string to, string? prefix, int? offset, int? limit, bool? include_unchanged) => service.Store.Diff(from, to, prefix, offset ?? 0, limit ?? 100, include_unchanged ?? false));
         app.MapGet("/storage", () => service.Store.StorageStats(service.Budget.Used));
-        // Path routes: /{locale}/{key}/{label}.{ext} serves a file, /{locale}/{key}/ lists them. Literal routes above take
-        // precedence, and a first segment that is not a configured locale is 404. A path follows the newest published
-        // export, so its content can change: short cache plus the content ETag, unlike immutable /files/{id}.
-        // Resolution is cached in memory (see AssetService.ResolvePath), so hits and 304s do not touch SQLite. Misses
-        // are cached too and answer with a short public cache, so repeated requests for absent paths stop at the CDN.
-        app.MapMethods("/{locale}/{**path}", ["GET", "HEAD"], (string locale, string? path, HttpContext context) =>
-        {
-            IResult NotFound()
-            {
-                context.Response.Headers.CacheControl = "public,max-age=60";
-                return Results.NotFound(new { error = "No published file at this path" });
-            }
-            path ??= "";
-            if (path.Length == 0 || context.Request.Path.Value!.EndsWith('/'))
-            {
-                var listed = service.ResolvePath(locale, path.TrimEnd('/'));
-                if (listed == null) return NotFound();
-                context.Response.Headers.CacheControl = "public,max-age=60";
-                return Results.Json(listed.Listing, Json.Options);
-            }
-            var slash = path.LastIndexOf('/');
-            var resolved = slash > 0 ? service.ResolvePath(locale, path[..slash]) : null;
-            if (resolved == null || !resolved.Files.TryGetValue(path[(slash + 1)..], out var file)) return NotFound();
-            if (file == null) return Results.Conflict(new { error = "Several files share this name; use their /files/{id} from the key listing" });
-            return ServeFile(context, file.Id, "public,max-age=600");
-        });
 
         return app;
     }

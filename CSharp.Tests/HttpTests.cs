@@ -44,9 +44,18 @@ public class HttpTests
             using var range = new HttpRequestMessage(HttpMethod.Get, "/files/" + fileId); range.Headers.Range = new(1, 4); var partial = await http.SendAsync(range); Assert.Equal(HttpStatusCode.PartialContent, partial.StatusCode); Assert.Equal(Fixture.Body[1..5], await partial.Content.ReadAsByteArrayAsync());
             using var conditional = new HttpRequestMessage(HttpMethod.Get, "/files/" + fileId); conditional.Headers.IfNoneMatch.Add(response.Headers.ETag!); Assert.Equal(HttpStatusCode.NotModified, (await http.SendAsync(conditional)).StatusCode);
             using var head = new HttpRequestMessage(HttpMethod.Head, "/files/" + fileId); var headResponse = await http.SendAsync(head); Assert.Equal(Fixture.Body.Length, headResponse.Content.Headers.ContentLength); Assert.Empty(await headResponse.Content.ReadAsByteArrayAsync());
+            // Publication links the file into the static tree; the path is served from disk.
+            var treeFile = Path.Combine(service.PublicRoot, "zh-Hant", "Live", "MusicScore", "test", "fixture.json");
+            Assert.Equal(Fixture.Body, File.ReadAllBytes(treeFile));
             var byPath = await http.GetAsync(pathUrl); Assert.Equal(Fixture.Body, await byPath.Content.ReadAsByteArrayAsync());
-            Assert.Equal(TimeSpan.FromSeconds(600), byPath.Headers.CacheControl!.MaxAge); Assert.Equal(response.Headers.ETag, byPath.Headers.ETag);
+            Assert.Equal(TimeSpan.FromSeconds(600), byPath.Headers.CacheControl!.MaxAge); Assert.Equal("application/json", byPath.Content.Headers.ContentType!.MediaType);
+            using var pathConditional = new HttpRequestMessage(HttpMethod.Get, pathUrl); pathConditional.Headers.IfNoneMatch.Add(byPath.Headers.ETag!);
+            Assert.Equal(HttpStatusCode.NotModified, (await http.SendAsync(pathConditional)).StatusCode);
             using var pathHead = new HttpRequestMessage(HttpMethod.Head, pathUrl); Assert.Equal(Fixture.Body.Length, (await http.SendAsync(pathHead)).Content.Headers.ContentLength);
+            // A lost tree is rebuilt by the backfill, after which misses no longer consult SQLite.
+            Directory.Delete(service.PublicRoot, true); Directory.CreateDirectory(service.PublicRoot);
+            await service.BackfillPublicTree(); Assert.True(service.PublicTreeReady); Assert.Equal(Fixture.Body, File.ReadAllBytes(treeFile));
+            Assert.Equal(Fixture.Body, await http.GetByteArrayAsync(pathUrl));
             var listing = Json.Read<AssetService.PathListing>(await http.GetStringAsync($"/zh-Hant/{Fixture.Key}/"));
             Assert.Equal(pathUrl, Assert.Single(listing.Files).Path); Assert.Equal("/files/" + fileId, listing.Files[0].File);
             foreach (var missing in new[] { $"/ja/{Fixture.Key}/fixture.json", $"/zh-Hant/{Fixture.Key}/other.json", "/zh-Hant/Live/MusicScore/", "/favicon.ico", "/zh-Hant/" })

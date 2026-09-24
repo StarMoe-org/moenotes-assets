@@ -58,9 +58,8 @@ public sealed partial class AssetService
         return record;
     }
 
-    /// <summary>A file's name under its key: source label plus the published extension, or null when a label cannot be a path segment.</summary>
-    public static string? PathName(PublishedFile file) =>
-        file.Label.Length == 0 || file.Label.Contains('/') || file.Label is "." or ".." ? null : file.Label + Path.GetExtension(file.Name);
+    /// <summary>A file's name under its key: source label plus the published extension, or null when it cannot be a path segment.</summary>
+    public static string? PathName(PublishedFile file) => file.Label + Path.GetExtension(file.Name) is var name && SafeSegment(name) ? name : null;
 
     /// <summary>Files by path name; a name shared by files with different content maps to null (ambiguous).</summary>
     public static IReadOnlyDictionary<string, PublishedFile?> PathFiles(Manifest manifest)
@@ -74,11 +73,11 @@ public sealed partial class AssetService
 
     public static PathListing Listing(string locale, Manifest manifest)
     {
-        var files = PathFiles(manifest);
+        var files = PathFiles(manifest); var addressable = manifest.Key.Split('/').All(SafeSegment);
         return new(locale, manifest.Key, manifest.Snapshot, manifest.Files.Select(file =>
         {
             var name = PathName(file);
-            var path = name != null && files[name] != null ? "/" + string.Join('/', new[] { locale }.Concat(manifest.Key.Split('/')).Append(name).Select(Uri.EscapeDataString)) : null;
+            var path = addressable && name != null && files[name] != null ? "/" + string.Join('/', new[] { locale }.Concat(manifest.Key.Split('/')).Append(name).Select(Uri.EscapeDataString)) : null;
             return new PathEntry(path, "/files/" + file.Id, file.Label, file.MediaType, file.Bytes, file.Sha256, file.Metadata);
         }).ToArray());
     }

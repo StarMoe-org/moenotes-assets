@@ -66,6 +66,15 @@ public sealed partial class Store : IDisposable
         using var reader = command.ExecuteReader();
         return reader.Read() ? Json.Read<T>(reader.GetFieldValue<byte[]>(0)) : default;
     });
+    /// <summary>Published exports after <paramref name="after"/> in ID order, for paging without a long read transaction.</summary>
+    public Manifest[] ExportPage(string after, int limit) => Read(c =>
+    {
+        using var command = c.CreateCommand(); command.CommandText = "SELECT body FROM records WHERE kind='export' AND id>$after ORDER BY id LIMIT $limit";
+        command.Parameters.AddWithValue("$after", after); command.Parameters.AddWithValue("$limit", limit);
+        using var reader = command.ExecuteReader(); var page = new List<Manifest>();
+        while (reader.Read()) page.Add(Json.Read<Manifest>(reader.GetFieldValue<byte[]>(0)));
+        return page.ToArray();
+    });
     /// <summary>The first of <paramref name="ids"/>, in order, that is a published export; one query for all candidates.</summary>
     public Manifest? FirstExport(IReadOnlyList<string> ids) => ids.Count == 0 ? null : Read(c =>
     {

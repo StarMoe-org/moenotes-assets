@@ -31,7 +31,9 @@ try
     Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancellation.Cancel(); };
     if (args[0] == "serve")
     {
-        await service.CheckMedia(cancellation.Token); var app = Api.Build(service); service.EnableAutomaticBundleScan(); await app.RunAsync(cancellation.Token); return 0;
+        await service.CheckMedia(cancellation.Token); var app = Api.Build(service); service.EnableAutomaticBundleScan();
+        _ = service.BackfillPublicTree(); // background; path misses fall back to SQLite until it finishes
+        await app.RunAsync(cancellation.Token); return 0;
     }
     if (args[0] == "list") { Console.WriteLine(Json.Write(service.ListAssets(null, args.ElementAtOrDefault(2), null, 0, 1000))); return 0; }
     TaskInfo task;
