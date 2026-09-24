@@ -161,6 +161,7 @@ public sealed partial class AssetService : IAsyncDisposable
                 await File.WriteAllBytesAsync(temporary, bytes, token); File.Move(temporary, target, true);
             }
             Store.IndexSnapshot(snapshot, Store.HasCatalogContent(digest) ? null : Catalog.Parse(bytes));
+            ContinueAutomaticBundleScan();
             return task with { State = "succeeded", Snapshot = id, Completed = 1 };
         }
         finally { refresh.Release(); }

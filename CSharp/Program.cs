@@ -1,5 +1,5 @@
 using MoenotesAssets;
-const string usage = "Usage: moenotes-assets serve CONFIG.toml | refresh CONFIG.toml | list CONFIG.toml [PREFIX] | export CONFIG.toml KEY... | export CONFIG.toml --prefix PREFIX | --version";
+const string usage = "Usage: moenotes-assets serve CONFIG.toml | scan CONFIG.toml | refresh CONFIG.toml | list CONFIG.toml [PREFIX] | export CONFIG.toml KEY... | export CONFIG.toml --prefix PREFIX | --version";
 try
 {
     if (args.Length == 1 && args[0] is "--help" or "-h") { Console.WriteLine(usage); return 0; }
@@ -11,11 +11,18 @@ try
         catch (Exception e) { result = new([], e.Message); }
         await File.WriteAllTextAsync(args[1] + ".result.json", Json.Write(result)); return 0;
     }
-    if (args.Length < 2 || args[0] is not ("serve" or "refresh" or "list" or "export"))
+    if (args.Length == 2 && args[0] == "scan-worker")
+    {
+        BundleScanResult result;
+        try { var job = Json.Read<WorkerJob>(await File.ReadAllTextAsync(args[1])); job.Config.Validate(); using var guard = new WorkerGuard(job); result = new(BundleScanner.Scan(job), null); }
+        catch (Exception e) { result = new([], e.Message); }
+        await File.WriteAllTextAsync(args[1] + ".result.json", Json.Write(result)); return 0;
+    }
+    if (args.Length < 2 || args[0] is not ("serve" or "scan" or "refresh" or "list" or "export"))
     {
         Console.Error.WriteLine(usage); return 2;
     }
-    if ((args[0] is "serve" or "refresh" && args.Length != 2) || (args[0] == "list" && args.Length > 3) ||
+    if ((args[0] is "serve" or "scan" or "refresh" && args.Length != 2) || (args[0] == "list" && args.Length > 3) ||
         (args[0] == "export" && (args.Length < 3 || (args[2] == "--prefix" && args.Length != 4))))
     { Console.Error.WriteLine(usage); return 2; }
     var config = Config.Load(args[1]); await using var service = new AssetService(config);
@@ -23,11 +30,12 @@ try
     Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancellation.Cancel(); };
     if (args[0] == "serve")
     {
-        await service.CheckMedia(cancellation.Token); var app = Api.Build(service); await app.RunAsync(cancellation.Token); return 0;
+        await service.CheckMedia(cancellation.Token); var app = Api.Build(service); service.EnableAutomaticBundleScan(); await app.RunAsync(cancellation.Token); return 0;
     }
     if (args[0] == "list") { Console.WriteLine(Json.Write(service.ListAssets(null, args.ElementAtOrDefault(2), null, 0, 1000))); return 0; }
     TaskInfo task;
     if (args[0] == "refresh") task = service.StartRefresh();
+    else if (args[0] == "scan") task = service.StartBundleScan();
     else
     {
         if (args.Length < 3) throw new InvalidDataException("Specify one or more keys or --prefix PREFIX");

@@ -57,4 +57,24 @@ public static class Processes
         Config.Require(result.Files.Length > 0, "Worker produced no files");
         return result.Files;
     }
+
+    public static async Task<BundleContentItem[]> ScanBundle(WorkerJob job, string stage, CancellationToken token)
+    {
+        var request = Path.Combine(stage, "scan.json");
+        await File.WriteAllTextAsync(request, Json.Write(job with { ParentPid = Environment.ProcessId }), token);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(job.Config.WorkerTimeoutSecs));
+        var executable = Environment.ProcessPath!;
+        var arguments = new List<string>();
+        var assembly = typeof(Processes).Assembly.Location;
+        if (!Path.GetFileNameWithoutExtension(executable).Equals("MoenotesAssets", StringComparison.OrdinalIgnoreCase))
+        {
+            executable = "dotnet"; arguments.Add(assembly);
+        }
+        arguments.AddRange(["scan-worker", request]);
+        await Run(executable, arguments, timeout.Token, limits: job);
+        var result = Json.Read<BundleScanResult>(await File.ReadAllTextAsync(request + ".result.json", token));
+        if (result.Error != null) throw new InvalidDataException(result.Error);
+        return result.Entries;
+    }
 }

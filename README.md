@@ -159,9 +159,13 @@ No license here grants rights to game resources or trademarks.
 ## Bundle browser API and shared storage
 
 The service is API-only; an external asset browser uses `/regions`, `/catalogs`,
-`/bundles`, `/bundles/{id}/assets`, `/assets` and `/diffs`. Catalogs are indexed in
-SQLite once. Browsing and version/region/language comparisons do not download or
-unpack bundles. See [API contract](docs/API.md) and [live acceptance](docs/LIVE_ACCEPTANCE.md).
+`/browse`, `/scan/status`, `/bundles/{id}/contents`, `/bundles`, `/assets` and
+`/diffs`. Catalogs are indexed in SQLite once. The exact-content browser scans
+each remote bundle once to record UnityFS and AssetBundle container paths. Missing
+bundles scan in the background when serving starts, and progress survives restarts.
+The first scan downloads bundle bytes but does not retain them or re-export media.
+Version/region/language catalog comparisons still use the metadata index. See
+[API contract](docs/API.md) and [live acceptance](docs/LIVE_ACCEPTANCE.md).
 
 Each region can advertise all languages; refreshing one region's five language
 catalogs is enough to browse that region's complete language inventory. Other

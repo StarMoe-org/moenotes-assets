@@ -39,6 +39,12 @@ public class BundleApiTests
         var verify = await http.PostAsJsonAsync("/bundles/verify", new VerifyRequest([bundle.Id], Snapshot: tw), Json.Options); Assert.Equal(HttpStatusCode.Accepted, verify.StatusCode);
         var task = Json.Read<TaskInfo>(await verify.Content.ReadAsStringAsync()); Assert.Equal("succeeded", (await service.Wait(task.Id)).State); Assert.Equal(1, count);
         var detail = Json.Read<BundleEntry>(await http.GetStringAsync($"/bundles/{bundle.Id}?snapshot={tw}")); Assert.NotNull(detail.PlainSha256); Assert.NotEqual(detail.PlainSha256, detail.DownloadSha256);
+        var scanResponse = await http.PostAsync("/bundles/scan", null); Assert.Equal(HttpStatusCode.Accepted, scanResponse.StatusCode);
+        var scanTask = Json.Read<TaskInfo>(await scanResponse.Content.ReadAsStringAsync()); Assert.Equal("succeeded", (await service.Wait(scanTask.Id)).State);
+        var scanStatus = Json.Read<BundleScanStatus>(await http.GetStringAsync($"/scan/status?snapshot={tw}")); Assert.Equal(1, scanStatus.Total); Assert.Equal(1, scanStatus.Scanned);
+        var rootPage = Json.Read<BundleBrowsePage>(await http.GetStringAsync($"/browse?snapshot={tw}")); Assert.Equal("Assets", Assert.Single(rootPage.Folders).Name);
+        var inside = Json.Read<BundleBrowsePage>(await http.GetStringAsync($"/browse?snapshot={tw}&directory=Assets")); Assert.Equal(Fixture.Internal, Assert.Single(inside.Files).Path);
+        var actualContents = Json.Read<BundleContentPage>(await http.GetStringAsync($"/bundles/{bundle.Id}/contents?snapshot={tw}")); Assert.Equal(2, actualContents.Total);
         var firstExport = await service.Wait(service.StartExport(new(Keys: [Fixture.Key], Snapshot: tw)).Id);
         var otherRegion = await service.Wait(service.StartExport(new(Keys: [Fixture.Key], Snapshot: kr)).Id);
         Assert.Equal("succeeded", firstExport.State); Assert.Equal("succeeded", otherRegion.State);

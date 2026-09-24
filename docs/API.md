@@ -30,9 +30,14 @@ key from a trusted backend/admin client over HTTPS, not public frontend code.
 | GET | /bundles | BundlePage |
 | GET | /bundles/{id} | Bundle descriptor and observed hashes |
 | GET | /bundles/{id}/assets | AssetPage including transitive dependents |
+| GET | /bundles/{id}/contents | Exact scanned UnityFS/container entries for one bundle |
 | GET | /bundles/{id}/equivalents | Candidate/verified matches in retained snapshots |
 | POST | /bundles/verify | 202 download/hash verification task |
+| POST | /bundles/scan | 202 resumable content scan task for missing remote bundles |
 | GET | /assets | AssetPage |
+| GET | /browse | Direct folders and scanned files under an internal path |
+| GET | /contents | Paginated scanned container paths across bundles |
+| GET | /scan/status | Bundle scan progress for a snapshot |
 | GET | /diffs?from=SNAPSHOT_A&to=SNAPSHOT_B | Bundle diff |
 | GET | /storage | Index, output deduplication and temporary budget statistics |
 | POST | /exports | 202 export task |
@@ -66,6 +71,28 @@ AssetPage: `{snapshot, offset, limit, total, assets: [...]}`.
 Assets expose `key`, `resource_type`, `internal`, `ambiguous`. Ambiguous labels
 remain visible; they are not silently discarded or guaranteed exportable.
 Bundle membership includes dependency relationships, not just directly owned files.
+
+`/browse` is the exact-content browser. It accepts `snapshot` (or `region` and
+`locale`), `directory`, `query`, `offset`, `limit`, and `descending`. With no
+query it returns immediate `folders` and paginated `files` under `directory`.
+`query` searches descendants of that directory by case-insensitive path text.
+Each file has `path`, `kind`, `source`, `path_id`, `bundle_id`, and `bundle_key`.
+`path_id` is a decimal string (or null) to preserve Unity's 64-bit value.
+`kind=asset` comes from the Unity AssetBundle `m_Container`; `kind=payload`
+represents a raw CRI resource. The `source` of an asset is its serialized UnityFS
+file. `/bundles/{id}/contents` also includes `kind=unity_file` entries from the
+outer UnityFS directory. These are actual observed container entries, unlike
+`/bundles/{id}/assets`, which lists all catalog assets depending on a bundle.
+
+`/scan/status` returns `{snapshot,total,scanned,entries,local_bundles,failed}`. The
+first three counts cover remote bundle IDs in the selected snapshot; local game
+dependencies are counted separately because the server cannot download them.
+Serving starts a background scan for missing remote bundle IDs. Interrupted work
+continues on the next start; successfully scanned IDs are skipped. Administrators
+can also call `POST /bundles/scan` or run `moenotes-assets scan CONFIG.toml`.
+The first scan downloads and parses bundle bytes; it does not retain the raw
+payloads or re-export assets. Catalog refreshes while serving schedule additional
+missing bundles. Scan tasks retain at most 100 error details in task results.
 
 Bundles expose `id`, stable `key`, `bundle_name`, `internal`, `provider`,
 `resource_type`, `catalog_hash`, `crc`, `bytes`, `candidate_id`, `remote`,

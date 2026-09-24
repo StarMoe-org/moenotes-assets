@@ -106,7 +106,12 @@ public static class Api
             ? new[] { new { id = service.Config.Region, default_locale = service.Config.Locale, locales = service.Config.Locales.Length == 0 ? new[] { service.Config.Locale } : service.Config.Locales } }
             : service.Config.Regions.Select(r => new { id = r.Id, default_locale = r.Locale ?? service.Config.Locale, locales = r.Locales ?? new[] { r.Locale ?? service.Config.Locale } }).ToArray());
         app.MapGet("/bundles", (string? snapshot, string? region, string? locale, string? prefix, int? offset, int? limit) => service.ListBundles(snapshot, region, locale, prefix, offset ?? 0, limit ?? 100));
+        app.MapGet("/contents", (string? snapshot, string? region, string? locale, string? prefix, int? offset, int? limit) => service.Store.Contents(service.ResolveSnapshot(snapshot, region, locale).Id, prefix, null, offset ?? 0, limit ?? 100));
+        app.MapGet("/browse", (string? snapshot, string? region, string? locale, string? directory, string? query, int? offset, int? limit, bool? descending) => service.Store.Browse(service.ResolveSnapshot(snapshot, region, locale).Id, directory, query, offset ?? 0, limit ?? 100, descending ?? false));
+        app.MapGet("/scan/status", (string? snapshot, string? region, string? locale) => service.Store.ScanStatus(service.ResolveSnapshot(snapshot, region, locale).Id));
+        app.MapPost("/bundles/scan", () => Accepted(service.StartBundleScan()));
         app.MapGet("/bundles/{id}", (string id, string? snapshot, string? region, string? locale) => service.Store.Bundle(service.ResolveSnapshot(snapshot, region, locale).Id, id));
+        app.MapGet("/bundles/{id}/contents", (string id, string? snapshot, string? region, string? locale, string? prefix, int? offset, int? limit) => service.Store.Contents(service.ResolveSnapshot(snapshot, region, locale).Id, prefix, id, offset ?? 0, limit ?? 100, true));
         app.MapGet("/bundles/{id}/assets", (string id, string? snapshot, string? region, string? locale, string? prefix, int? offset, int? limit) => service.ListAssets(snapshot, prefix, null, offset ?? 0, limit ?? 100, region, locale, id));
         app.MapGet("/bundles/{id}/equivalents", (string id, string? snapshot, string? region, string? locale, int? limit) => service.Store.Equivalents(service.ResolveSnapshot(snapshot, region, locale).Id, id, limit ?? 100));
         app.MapPost("/bundles/verify", (VerifyRequest request) => Accepted(service.StartVerify(request)));

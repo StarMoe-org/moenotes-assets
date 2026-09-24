@@ -60,7 +60,7 @@ publisher resources; real game revisions require separate acceptance testing.
 
 ## Relational catalog index and content-addressed outputs
 
-Derived index schema 3 separates snapshot scope from catalog content. Equal full
+Derived index schema 4 separates snapshot scope from catalog content. Equal full
 catalog SHA256 values share a graph; differing catalogs share exact bundle and
 asset descriptor definitions through integer memberships. Indexed forward/reverse
 edges support cycle-safe recursive dependency queries. Scope-specific observations
@@ -70,6 +70,11 @@ region. Stable-path SQL diffs report both status and evidence strength.
 Older C# derived indexes rebuild from retained catalog binaries without discarding
 exports/tasks. Catalog binaries are stored by content SHA256, with legacy snapshot
 filename fallback. The browser does not require reparsing a binary on each request.
+The schema 3 to 4 upgrade adds bundle content and directory tables in place.
+An isolated scan worker reads each missing remote bundle, records UnityFS directory
+entries and AssetBundle `m_Container` paths, and commits each bundle atomically.
+Interrupted scans resume by skipping committed bundle IDs. Raw downloads are
+released after scanning; local game dependencies cannot be scanned remotely.
 
 Publication validates worker outputs and moves each into `blobs/<prefix>/<sha256>`.
 Per-export manifests and per-file records preserve scope identities. SQLite commit

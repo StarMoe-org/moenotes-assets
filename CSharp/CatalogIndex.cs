@@ -43,9 +43,10 @@ public sealed partial class Store
     private void InitializeIndex()
     {
         // Rebuild only derived browser tables. Snapshot binaries, exports, tasks and observations remain intact.
-        Config.Require(Get<int>("setting", "browser_index_version") <= 3, "Browser index is newer than this service");
+        var version = Get<int>("setting", "browser_index_version");
+        Config.Require(version <= 4, "Browser index is newer than this service");
         var existing = Scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='bundles'") > 0;
-        if (existing && Get<int>("setting", "browser_index_version") != 3)
+        if (existing && version < 3)
         {
             using (var tx = connection.BeginTransaction())
             {
@@ -89,8 +90,16 @@ public sealed partial class Store
         CREATE VIEW IF NOT EXISTS asset_locations AS SELECT l.content_id,a.key,l.location FROM asset_links l JOIN asset_defs a ON a.aid=l.aid;
         CREATE TABLE IF NOT EXISTS observations(snapshot TEXT NOT NULL,bundle_id TEXT NOT NULL,download_sha256 TEXT NOT NULL,plain_sha256 TEXT NOT NULL,verified INTEGER NOT NULL,PRIMARY KEY(snapshot,bundle_id)) WITHOUT ROWID;
         CREATE INDEX IF NOT EXISTS ix_observations_plain ON observations(plain_sha256,snapshot,bundle_id);
+        CREATE TABLE IF NOT EXISTS bundle_scans(bundle_id TEXT PRIMARY KEY,plain_sha256 TEXT NOT NULL,scanned INTEGER NOT NULL,entry_count INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS bundle_scan_failures(bundle_id TEXT PRIMARY KEY,error TEXT NOT NULL,updated INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS bundle_contents(bundle_id TEXT NOT NULL,ordinal INTEGER NOT NULL,path TEXT NOT NULL,parent TEXT NOT NULL,kind TEXT NOT NULL,source TEXT NOT NULL,path_id INTEGER,
+          PRIMARY KEY(bundle_id,ordinal)) WITHOUT ROWID;
+        CREATE INDEX IF NOT EXISTS ix_bundle_contents_path ON bundle_contents(path,bundle_id,ordinal);
+        CREATE INDEX IF NOT EXISTS ix_bundle_contents_parent ON bundle_contents(parent,path,bundle_id,ordinal);
+        CREATE TABLE IF NOT EXISTS bundle_directories(bundle_id TEXT NOT NULL,path TEXT NOT NULL,parent TEXT NOT NULL,PRIMARY KEY(bundle_id,path)) WITHOUT ROWID;
+        CREATE INDEX IF NOT EXISTS ix_bundle_directories_parent ON bundle_directories(parent,path,bundle_id);
         """);
-        Put("setting", "browser_index_version", 3);
+        Put("setting", "browser_index_version", 4);
     }
     private SqliteCommand Prepared(string sql, params string[] names)
     {
