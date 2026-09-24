@@ -50,3 +50,7 @@ changes require explicit release notes; a frozen stable API is not claimed.
   parsing; support CRI audio embedded in Unity managed byte implementations.
 - Enforce worker resource limits from the parent process so the entire child
   process tree can be terminated without attempting to kill the caller itself.
+- Fix temporary-budget exhaustion cascades at high download concurrency: reserve
+  each complete export's dependencies and workspace before downloading, wait for
+  capacity, and retain the reservation until shared source cleanup completes.
+- Do not count cancellation during deployment as a per-resource export failure.

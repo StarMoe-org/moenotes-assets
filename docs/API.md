@@ -211,3 +211,10 @@ reuse decoding/transcoding across locales/regions while preserving scoped source
 observations and manifests. This is independent of file-byte deduplication. Each
 new source scope still downloads and verifies its inputs; catalog hashes alone
 never skip downloads. Missing referenced output blobs trigger fresh conversion.
+
+Raising `downloads` does not bypass temporary-space admission. Work waits when
+`temp_bytes` reservations are occupied; the configured value is a byte budget,
+not a measurement of disk free space or RAM. Existing terminal tasks are historical
+records: after fixing a failed deployment, resubmit `/exports` with the same
+snapshot and prefix (or failed keys). Already published exports are reused;
+terminal failed results are not automatically erased or retried.

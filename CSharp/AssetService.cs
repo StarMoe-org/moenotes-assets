@@ -21,7 +21,7 @@ public sealed partial class AssetService : IAsyncDisposable
     private readonly CancellationTokenSource shutdown = new();
     private readonly Dictionary<string, WeakReference<SemaphoreSlim>> publicationGates = new();
     private readonly string classDataIdentity;
-    private sealed record Download(WorkerInput Input, string Hash, string PlainHash, string Directory, IDisposable Reservation);
+    private sealed record Download(WorkerInput Input, string Hash, string PlainHash, string Directory);
     public static long Now => DateTimeOffset.UtcNow.ToUnixTimeSeconds();
     public AssetService(Config config)
     {
@@ -55,7 +55,7 @@ public sealed partial class AssetService : IAsyncDisposable
             http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false, AutomaticDecompression = DecompressionMethods.None }) { Timeout = Timeout.InfiniteTimeSpan };
             downloads = new(config.Downloads); workers = new(config.Workers); videos = new(config.Videos); queue = new(config.QueueLimit);
             Budget = new(config.TempBytes);
-            downloadWork = new(d => { try { RemoveTree(d.Directory); } finally { d.Reservation.Dispose(); } });
+            downloadWork = new(d => RemoveTree(d.Directory));
             InitializeBatches();
         }
         catch { Store?.Dispose(); instance.Dispose(); throw; }
@@ -212,6 +212,7 @@ public sealed partial class AssetService : IAsyncDisposable
                             item = new(key, manifest.Id, null, Reused: manifest.ReusedFrom != null);
                         }
                     }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
                     catch (Exception e) { item = new(key, null, e.Message); }
                     lock (results)
                     {
@@ -235,12 +236,11 @@ public sealed partial class AssetService : IAsyncDisposable
     private async Task<Download> DownloadOne(Snapshot snapshot, Location location, CancellationToken token)
     {
         await downloads.WaitAsync(token);
-        IDisposable? reservation = null; string? directory = null;
+        string? directory = null;
         try
         {
             var options = location.Options ?? throw new InvalidDataException("Missing bundle options");
             Require(options.Size > 0 && options.Size <= Config.InputBytes, "Input size budget");
-            reservation = Budget.Reserve(options.Size);
             directory = Path.Combine(Config.DataDir, "tmp", "download-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(directory);
             var path = Path.Combine(directory, "payload");
             var uri = (Config with { CdnRoot = snapshot.CdnRoot }).AssetUri(location.Internal);
@@ -268,9 +268,9 @@ public sealed partial class AssetService : IAsyncDisposable
             await output.FlushAsync(timeout.Token);
             var rawDigest = Convert.ToHexStringLower(hash.GetHashAndReset()); var plainDigest = Convert.ToHexStringLower(plainHash.GetHashAndReset());
             Store.Observe(snapshot.Id, location, rawDigest, plainDigest);
-            return new(new(location, path), rawDigest, plainDigest, directory, reservation);
+            return new(new(location, path), rawDigest, plainDigest, directory);
         }
-        catch { if (directory != null) RemoveTree(directory); reservation?.Dispose(); throw; }
+        catch { if (directory != null) RemoveTree(directory); throw; }
         finally { downloads.Release(); }
     }
     private async Task<Manifest> ExportOne(Snapshot snapshot, Catalog catalog, string key, string id, CancellationToken token)
@@ -288,6 +288,7 @@ public sealed partial class AssetService : IAsyncDisposable
         await publication.WaitAsync(token);
         SemaphoreSlim? conversionGate = null; var conversionHeld = false;
         var leases = new List<SharedWork<Download>.Lease>(); string? stage = null; var moved = false;
+        IDisposable? reservation = null;
         var destination = Path.Combine(Config.DataDir, "exports", id);
         try
         {
@@ -300,6 +301,9 @@ public sealed partial class AssetService : IAsyncDisposable
                 if (raw.Length == 1) locations = raw; // Otherwise the CRI bytes are embedded in the Unity asset.
             }
             Require(locations.Sum(l => l.Options!.Size) <= Config.ExpandedBytes, "Dependency set budget");
+            // Admit the complete dependency set and workspace atomically. Waiting
+            // while holding partial downloads could otherwise deadlock the budget.
+            reservation = await Budget.ReserveAsync(locations.Sum(l => l.Options!.Size) + Config.OutputBytes + Config.ExpandedBytes * 2, token);
             foreach (var location in locations)
                 leases.Add(await downloadWork.Join(snapshot.Id + ":" + location.Id, ct => DownloadOne(snapshot, location, ct), token));
             var selectedConfig = Config.ForSnapshot(snapshot);
@@ -326,7 +330,6 @@ public sealed partial class AssetService : IAsyncDisposable
                 token.ThrowIfCancellationRequested(); Directory.Move(stage, destination); moved = true;
                 Store.Publish(reused, true); moved = false; return reused;
             }
-            using var reservation = Budget.Reserve(Config.OutputBytes + Config.ExpandedBytes * 2);
             stage = Path.Combine(Config.DataDir, "tmp", "job-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(stage);
             var output = Path.Combine(stage, "out");
             await workers.WaitAsync(token);
@@ -366,7 +369,11 @@ public sealed partial class AssetService : IAsyncDisposable
         finally
         {
             try { if (moved) RemoveTree(destination); if (stage != null) RemoveTree(stage); }
-            finally { foreach (var lease in leases) lease.Dispose(); if (conversionHeld) conversionGate!.Release(); publication.Release(); }
+            finally
+            {
+                try { foreach (var lease in leases) await lease.DisposeAsync(); }
+                finally { reservation?.Dispose(); if (conversionHeld) conversionGate!.Release(); publication.Release(); }
+            }
         }
     }
     public TaskInfo StartVerify(VerifyRequest request)
@@ -383,9 +390,11 @@ public sealed partial class AssetService : IAsyncDisposable
                 if (token.IsCancellationRequested) break;
                 try
                 {
-                    using var lease = await downloadWork.Join(snapshot.Id + ":" + location.Id, ct => DownloadOne(snapshot, location, ct), token);
+                    using var reservation = await Budget.ReserveAsync(location.Options!.Size, token);
+                    await using var lease = await downloadWork.Join(snapshot.Id + ":" + location.Id, ct => DownloadOne(snapshot, location, ct), token);
                     results.Add(new(BundleIdentity.Id(location), null, null));
                 }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
                 catch (Exception e) { results.Add(new(BundleIdentity.Id(location), null, e.Message)); }
                 task = task with { Completed = results.Count, Results = results.ToArray(), Updated = Now };
                 if (results.Count % 20 == 0) Store.Put("task", task.Id, task);

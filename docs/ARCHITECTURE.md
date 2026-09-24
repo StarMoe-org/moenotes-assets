@@ -86,3 +86,11 @@ snapshot. Recovery retries interrupted steps, reuses completed children/outputs,
 and preserves explicit cancellation. Shutdown drains the scheduler before closing
 the store. Batch cancellation drains its child before advancing to another batch.
 Standalone tasks still use the original concurrent admission and worker gates.
+
+Temporary storage uses cancellable admission: an export reserves its full source
+set plus worker workspace before downloading. When other work holds capacity,
+new work waits rather than failing with temporary budget exhaustion. This avoids
+partial-dependency deadlocks and failure cascades when downloads exceeds workers.
+Reservations remain held until the last shared consumer's source cleanup ends.
+A job exceeding the entire configured budget still fails with an explicit error.
+Deployment cancellation does not count interrupted resources as failed items.

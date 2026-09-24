@@ -30,13 +30,13 @@ public sealed class SharedWork<T> where T : class
             entry.Users++;
         }
         try { return new Lease(await entry.Task.WaitAsync(token), () => Release(key, entry)); }
-        catch { Release(key, entry); throw; }
+        catch { await Release(key, entry); throw; }
     }
-    private void Release(string key, Entry entry)
+    private Task Release(string key, Entry entry)
     {
         lock (gate)
         {
-            if (--entry.Users != 0) return;
+            if (--entry.Users != 0) return Task.CompletedTask;
             entries.Remove(key);
             entry.Cancellation.Cancel();
         }
@@ -45,31 +45,54 @@ public sealed class SharedWork<T> where T : class
             try { if (t.IsCompletedSuccessfully) cleanup?.Invoke(t.Result); else _ = t.Exception; }
             finally { entry.Cancellation.Dispose(); lock (gate) pending.Remove(entry.Finished.Task); entry.Finished.SetResult(); }
         }, TaskScheduler.Default);
+        return entry.Finished.Task;
     }
     public async Task Drain() { while (true) { Task[] tasks; lock (gate) tasks = pending.ToArray(); if (tasks.Length == 0) return; await Task.WhenAll(tasks); } }
-    public sealed class Lease(T value, Action release) : IDisposable
+    public sealed class Lease(T value, Func<Task> release) : IDisposable, IAsyncDisposable
     {
         public T Value { get; } = value;
-        private Action? release = release;
-        public void Dispose() => Interlocked.Exchange(ref release, null)?.Invoke();
+        private Func<Task>? release = release;
+        public void Dispose() { _ = Interlocked.Exchange(ref release, null)?.Invoke(); }
+        public async ValueTask DisposeAsync() { var task = Interlocked.Exchange(ref release, null)?.Invoke(); if (task != null) await task; }
     }
 }
 public sealed class Budget(long maximum)
 {
     private long used;
+    private readonly object gate = new();
+    private TaskCompletionSource changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public long Used => Interlocked.Read(ref used);
     public IDisposable Reserve(long size)
     {
+        lock (gate)
+        {
+            Config.Require(size >= 0 && size <= maximum - used, "Temporary storage budget exhausted");
+            used += size; return new Reservation(this, size);
+        }
+    }
+    public async ValueTask<IDisposable> ReserveAsync(long size, CancellationToken token)
+    {
+        Config.Require(size >= 0 && size <= maximum, "Task exceeds total temporary storage budget");
         while (true)
         {
-            var before = Used;
-            Config.Require(size >= 0 && size <= maximum - before, "Temporary storage budget exhausted");
-            if (Interlocked.CompareExchange(ref used, before + size, before) == before) return new Reservation(this, size);
+            token.ThrowIfCancellationRequested(); Task waiting;
+            lock (gate)
+            {
+                if (size <= maximum - used) { used += size; return new Reservation(this, size); }
+                waiting = changed.Task;
+            }
+            await waiting.WaitAsync(token);
         }
+    }
+    private void Release(long size)
+    {
+        TaskCompletionSource signal;
+        lock (gate) { used -= size; signal = changed; changed = new(TaskCreationOptions.RunContinuationsAsynchronously); }
+        signal.TrySetResult();
     }
     private sealed class Reservation(Budget budget, long size) : IDisposable
     {
         private long bytes = size;
-        public void Dispose() => Interlocked.Add(ref budget.used, -Interlocked.Exchange(ref bytes, 0));
+        public void Dispose() => budget.Release(Interlocked.Exchange(ref bytes, 0));
     }
 }
