@@ -139,8 +139,9 @@ optional `snapshot`, `region`, `locale`. Unknown JSON members are rejected.
 An empty prefix selects the entire catalog. Prefix selections collapse aliases
 for an exact target into one export, preferring readable addresses; the browsing
 index still retains every alias. Known unsupported types and ambiguous labels
-produce results with `skip_reason`, not a download attempt. `skipped` on the task
-counts those entries. Skips have null export_id/error and are not exported files.
+produce results with `skip_reason`, not a download attempt. USM alpha video
+(`@ALP`) is detected after download and also reported with `skip_reason`. `skipped`
+on the task counts those entries. Skips have null export_id/error and are not exported files.
 Completed includes successful, skipped and failed items. A succeeded task can
 contain skips; inspect skipped/results when checking export coverage. Missing keys
 and actual download/decoder errors still fail individually.

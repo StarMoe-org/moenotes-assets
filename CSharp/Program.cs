@@ -8,6 +8,7 @@ try
     {
         WorkerResult result;
         try { var job = Json.Read<WorkerJob>(await File.ReadAllTextAsync(args[1])); job.Config.Validate(); using var guard = new WorkerGuard(job); result = new(await Worker.Run(job), null); }
+        catch (UnsupportedInputException e) { result = new([], e.Message, true); }
         catch (Exception e) { result = new([], e.Message); }
         await File.WriteAllTextAsync(args[1] + ".result.json", Json.Write(result)); return 0;
     }

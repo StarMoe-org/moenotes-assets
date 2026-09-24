@@ -10,8 +10,10 @@ public class TextureTests
     {
         var png = Assert.Single(result, f => f.MediaType == "image/png");
         var webp = Assert.Single(result, f => f.MediaType == "image/webp");
-        using var original = SkiaSharp.SKBitmap.Decode(Path.Combine(job.Output, png.Name));
-        using var converted = SkiaSharp.SKBitmap.Decode(Path.Combine(job.Output, webp.Name));
+        // Decode from memory: SkiaSharp opens paths with an inheritable native handle, and a
+        // worker started by a parallel test can inherit it and block this test's cleanup on Windows.
+        using var original = SkiaSharp.SKBitmap.Decode(File.ReadAllBytes(Path.Combine(job.Output, png.Name)));
+        using var converted = SkiaSharp.SKBitmap.Decode(File.ReadAllBytes(Path.Combine(job.Output, webp.Name)));
         Assert.NotNull(converted); Assert.Equal(original.Width, converted.Width); Assert.Equal(original.Height, converted.Height);
         for (int y = 0; y < original.Height; y++) for (int x = 0; x < original.Width; x++)
         {

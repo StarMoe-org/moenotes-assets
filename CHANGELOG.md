@@ -62,3 +62,8 @@ changes require explicit release notes; a frozen stable API is not claimed.
   most mono and some stereo streams at the standard end frame ("corrupt input
   packet" / I/O error), and its decoder deviates from CRI's scale and coefficient
   arithmetic. The movie profile is now v2, so affected videos are exported again.
+- Record USM alpha video (`@ALP`), which is unsupported, as skipped instead of failed.
+  It is detected after download; outputs and profiles are unchanged.
+- Fix intermittent Windows test cleanup failures: tests decoded images through
+  SkiaSharp file paths, whose inheritable native handles leaked into workers
+  started by parallel tests. Images are now decoded from memory.

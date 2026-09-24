@@ -53,7 +53,7 @@ public static class Processes
         arguments.AddRange(["worker", request]);
         await Run(executable, arguments, timeout.Token, limits: job);
         var result = Json.Read<WorkerResult>(await File.ReadAllTextAsync(request + ".result.json", token));
-        if (result.Error != null) throw new InvalidDataException(result.Error);
+        if (result.Error != null) throw result.Unsupported ? new UnsupportedInputException(result.Error) : new InvalidDataException(result.Error);
         Config.Require(result.Files.Length > 0, "Worker produced no files");
         return result.Files;
     }

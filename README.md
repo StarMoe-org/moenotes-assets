@@ -78,6 +78,7 @@ See [API](docs/API.md) for selection, cancellation, manifests and file ranges.
 Asset paths are resolved exactly through bundle containers. Original names are
 labels, never output filesystem paths. Known unsupported types and ambiguous
 labels are recorded as skipped before download; decoder/data errors still fail.
+USM alpha video (`@ALP`) is only recognizable after download and is also skipped.
 Raw resource containers are not advertised as successful exports.
 
 Audio uses 96 kbps mono / 192 kbps stereo AAC without normalization. USM ADX/HCA

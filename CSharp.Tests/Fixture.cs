@@ -53,11 +53,11 @@ internal static class Fixture
     public static void Be(Stream stream, ulong n) { Span<byte> b = stackalloc byte[8]; BinaryPrimitives.WriteUInt64BigEndian(b, n); stream.Write(b); }
     public static void Be(Stream stream, uint n) { Span<byte> b = stackalloc byte[4]; BinaryPrimitives.WriteUInt32BigEndian(b, n); stream.Write(b); }
     public static void Be(Stream stream, ushort n) { Span<byte> b = stackalloc byte[2]; BinaryPrimitives.WriteUInt16BigEndian(b, n); stream.Write(b); }
-    public static byte[] Catalog(int size, uint crc)
+    public static byte[] Catalog(int size, uint crc, string bundleProvider = MoenotesAssets.Catalog.Crypt, string type = "UnityEngine.TextAsset")
     {
         var b = new Bin(); var hash = b.Put(Enumerable.Repeat((byte)1, 16).ToArray()); var bn = b.String("fixture"); var common = b.Words(0, 0); var opt = b.Words(hash, bn, crc, (uint)size, common); var ot = b.Type("UnityEngine.ResourceManagement.ResourceProviders.AssetBundleRequestOptions"); var extra = b.Words(ot, opt);
-        var bk = b.String("fixture.bundle"); var bi = b.String("https://dummy.net/asset/Android/fixture.bundle"); var bp = b.String(MoenotesAssets.Catalog.Crypt); var bt = b.Type("UnityEngine.ResourceManagement.ResourceProviders.IAssetBundleResource"); var bundle = b.Words(bk, bi, bp, uint.MaxValue, 0, extra, bt);
-        var key = b.String(Key); var inner = b.String(Internal); var provider = b.String("UnityEngine.ResourceManagement.ResourceProviders.BundledAssetProvider"); var deps = b.Array(bundle); var type = b.Type("UnityEngine.TextAsset"); var loc = b.Words(key, inner, provider, deps, 0, uint.MaxValue, type);
+        var bk = b.String("fixture.bundle"); var bi = b.String("https://dummy.net/asset/Android/fixture.bundle"); var bp = b.String(bundleProvider); var bt = b.Type("UnityEngine.ResourceManagement.ResourceProviders.IAssetBundleResource"); var bundle = b.Words(bk, bi, bp, uint.MaxValue, 0, extra, bt);
+        var key = b.String(Key); var inner = b.String(Internal); var provider = b.String("UnityEngine.ResourceManagement.ResourceProviders.BundledAssetProvider"); var deps = b.Array(bundle); var target = b.Type(type); var loc = b.Words(key, inner, provider, deps, 0, uint.MaxValue, target);
         var kt = b.Type("System.String"); var ks = b.String(Key); var kv = b.Words(ks, 0); var k = b.Words(kt, kv); var ls = b.Array(loc); var keys = b.Array(k, ls); var bytes = b.Bytes(); BinaryPrimitives.WriteUInt32LittleEndian(bytes, 0x0de38942); BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(4), 2); BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(8), keys); return bytes;
     }
     private sealed class Bin

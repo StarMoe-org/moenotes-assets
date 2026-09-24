@@ -21,6 +21,7 @@ public static class Usm
             var size = BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(4)); var offset = BinaryPrimitives.ReadUInt16BigEndian(header.AsSpan(8));
             var padding = BinaryPrimitives.ReadUInt16BigEndian(header.AsSpan(10)); var channel = header[12]; var kind = header[15] & 3;
             Require(size >= 24 && start + 8 + size <= input.Length && offset >= 24 && offset + padding <= size, "Invalid USM chunk range");
+            if (type == "@ALP") throw new UnsupportedInputException("Unsupported USM alpha video (@ALP)");
             Require(type is "CRID" or "@SFV" or "@SFA" or "@CUE", "Unsupported USM stream");
             var length = size - offset - padding; Require(length <= Math.Min(config.ExpandedBytes, 256L << 20), "USM chunk budget");
             input.Position = start + 8 + offset; var bytes = new byte[length]; input.ReadExactly(bytes);

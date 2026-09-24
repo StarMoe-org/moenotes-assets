@@ -1,3 +1,10 @@
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using MoenotesAssets;
 using VGAudio.Codecs.CriHca;
 using VGAudio.Containers.Adx;
@@ -8,6 +15,24 @@ namespace MoenotesAssets.Tests;
 
 public class MediaTests
 {
+    [Fact]
+    public async Task UsmAlphaVideoIsRecordedAsSkipped()
+    {
+        using var dir = new TempDirectory(); var config = new Config { CdnRoot = "https://cdn.invalid" };
+        // Demux stops at the @ALP chunk, so the video payload never reaches FFmpeg.
+        var usm = CriFixture.Usm(new byte[0x300], config.CriKey, alpha: true);
+        var builder = WebApplication.CreateBuilder(); builder.Logging.ClearProviders(); builder.WebHost.UseUrls("http://127.0.0.1:0");
+        await using var cdn = builder.Build(); cdn.MapGet("/asset/Android/fixture.bundle", () => Results.Bytes(usm)); await cdn.StartAsync();
+        var url = cdn.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
+        await using var service = new AssetService(config with { DataDir = Path.Combine(dir.Path, "data"), CdnRoot = url, AllowLoopbackHttp = true });
+        var catalog = Fixture.Catalog(usm.Length, 0, Catalog.Cri, "CriWare.Assets.CriManaUsmAsset"); var digest = Crypto.Sha256(catalog);
+        File.WriteAllBytes(Path.Combine(dir.Path, "data", "catalogs", digest + ".bin"), catalog);
+        var snapshot = new Snapshot("snapshot", digest, "hk", "zh-Hant", "main", url, "", AssetService.Now); service.Store.IndexSnapshot(snapshot, Catalog.Parse(catalog));
+        var task = await service.Wait(service.StartExport(new(Keys: [Fixture.Key], Snapshot: snapshot.Id)).Id).WaitAsync(TimeSpan.FromSeconds(60));
+        Assert.Equal("succeeded", task.State); Assert.Equal(1, task.Skipped);
+        var item = Assert.Single(task.Results); Assert.Null(item.Error); Assert.Null(item.ExportId); Assert.Contains("@ALP", item.SkipReason);
+        await cdn.StopAsync();
+    }
     private static WorkerJob Job(Config config, string path, string output, string type) => new(config,
         new(1, "media/fixture", "https://cdn.invalid/asset/Android/fixture", Catalog.Cri, type, [], null),
         [new(new(1, "media/fixture", "https://cdn.invalid/asset/Android/fixture", Catalog.Cri, type, [], null), path)], output);

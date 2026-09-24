@@ -26,7 +26,9 @@ public sealed record Source(Location Location, string DownloadSha256, string? Pl
 public sealed record Manifest(string Id, string Snapshot, string Key, string Profile, Source[] Sources, PublishedFile[] Files, string? Region = null, string? ReusedFrom = null);
 public sealed record WorkerInput(Location Location, string Path);
 public sealed record WorkerJob(Config Config, Location Target, WorkerInput[] Inputs, string Output, int ParentPid = 0);
-public sealed record WorkerResult(Artifact[] Files, string? Error);
+public sealed record WorkerResult(Artifact[] Files, string? Error, bool Unsupported = false);
 public sealed class ApiException(int status, string message) : Exception(message) { public int Status { get; } = status; }
+// A known unsupported feature found only after download; exports record it as skipped, not failed.
+public sealed class UnsupportedInputException(string message) : Exception(message);
 
 public sealed record VerifyRequest(string[] Ids, string? Snapshot = null, string? Region = null, string? Locale = null);

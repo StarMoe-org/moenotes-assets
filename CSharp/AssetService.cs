@@ -214,6 +214,7 @@ public sealed partial class AssetService : IAsyncDisposable
                         }
                     }
                     catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+                    catch (UnsupportedInputException e) { item = new(key, null, null, e.Message); }
                     catch (Exception e) { item = new(key, null, e.Message); }
                     lock (results)
                     {
