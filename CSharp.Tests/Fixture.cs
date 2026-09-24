@@ -40,11 +40,14 @@ internal static class Fixture
     {
         var b = Encoding.UTF8.GetBytes(text); writer.Write(b.Length); writer.Write(b); while (writer.BaseStream.Position % 4 != 0) writer.Write((byte)0);
     }
-    public static byte[] Bundle(byte[]? data = null)
+    public static byte[] Bundle(byte[]? data = null, byte[]? resource = null)
     {
         var payload = data ?? Serialized(); using var info = new MemoryStream();
-        info.Write(new byte[16]); Be(info, 1u); Be(info, (uint)payload.Length); Be(info, (uint)payload.Length); Be(info, (ushort)0); Be(info, 1u); Be(info, 0UL); Be(info, (ulong)payload.Length); Be(info, 4u); info.Write("CAB-fixture\0"u8);
+        var fullSize = payload.Length + (resource?.Length ?? 0);
+        info.Write(new byte[16]); Be(info, 1u); Be(info, (uint)fullSize); Be(info, (uint)fullSize); Be(info, (ushort)0); Be(info, resource == null ? 1u : 2u); Be(info, 0UL); Be(info, (ulong)payload.Length); Be(info, 4u); info.Write("CAB-fixture\0"u8);
+        if (resource != null) { Be(info, (ulong)payload.Length); Be(info, (ulong)resource.Length); Be(info, 0u); info.Write("CAB-fixture.resS\0"u8); }
         using var output = new MemoryStream(); output.Write("UnityFS\0"u8); Be(output, 8u); output.Write("5.x.x\0"u8); output.Write("6000.3.12f1\0"u8); var at = (int)output.Position; Be(output, 0UL); Be(output, (uint)info.Length); Be(output, (uint)info.Length); Be(output, 0u); while (output.Position % 16 != 0) output.WriteByte(0); output.Write(info.ToArray()); output.Write(payload);
+        if (resource != null) output.Write(resource);
         var bytes = output.ToArray(); BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(at), (ulong)bytes.Length); return bytes;
     }
     public static void Be(Stream stream, ulong n) { Span<byte> b = stackalloc byte[8]; BinaryPrimitives.WriteUInt64BigEndian(b, n); stream.Write(b); }

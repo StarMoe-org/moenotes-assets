@@ -46,3 +46,7 @@ changes require explicit release notes; a frozen stable API is not claimed.
 - Export PNG and lossless WebP together using in-process SkiaSharp encoding.
 - Reuse completed conversions across scopes only after verifying plaintext source
   hashes and conversion inputs; retain separate manifests and report reuse counts.
+- Use UnityFS serialized-entry flags to keep raw .resS pixels out of metadata
+  parsing; support CRI audio embedded in Unity managed byte implementations.
+- Enforce worker resource limits from the parent process so the entire child
+  process tree can be terminated without attempting to kill the caller itself.

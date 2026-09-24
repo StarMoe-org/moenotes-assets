@@ -17,6 +17,7 @@ public static class Worker
     {
         public WorkerJob Job { get; } = job;
         public List<Artifact> Files { get; } = [];
+        public List<string> EmbeddedMedia { get; } = [];
         private long total;
         public string PathFor(string extension) => Path.Combine(Job.Output, $"{Files.Count:D5}.{extension}");
         public void Add(string path, string label, string mime, object? metadata = null)
@@ -36,13 +37,14 @@ public static class Worker
     {
         job.Config.Validate(); Require(job.Inputs.Length > 0 && job.Inputs.Select(i => i.Location.Id).Distinct().Count() == job.Inputs.Length, "Invalid worker inputs");
         Directory.CreateDirectory(job.Output); var output = new Output(job);
-        if (job.Target.Provider == Catalog.Cri || job.Target.ResourceType.StartsWith("CriWare.", StringComparison.Ordinal))
+        if (job.Target.Provider == Catalog.Cri || (job.Target.ResourceType.StartsWith("CriWare.", StringComparison.Ordinal) && job.Inputs.Any(i => i.Location.Provider == Catalog.Cri)))
         {
             var inputs = job.Inputs.Where(i => i.Location.Provider == Catalog.Cri).ToArray();
             Require(inputs.Length == 1, "Ambiguous CRI dependencies");
             await CriMedia.Export(inputs[0].Path, output, token);
         }
         else Unity(job, output);
+        foreach (var path in output.EmbeddedMedia) await CriMedia.Export(path, output, token);
         Require(output.Files.Count > 0, "No supported outputs"); return output.Files.ToArray();
     }
     private static void Unity(WorkerJob job, Output output)
@@ -80,7 +82,10 @@ public static class Worker
                 }
                 Require(input.Location.Options?.Crc is null or 0 || ~crc == input.Location.Options.Crc, "Bundle CRC mismatch");
                 for (var i = 0; i < info.BlockAndDirInfo.DirectoryInfos.Count; i++)
-                    if (info.IsAssetsFile(i)) files.Add(manager.LoadAssetsFileFromBundle(bundle, i, false));
+                    // Raw .resS pixels can accidentally resemble a serialized-file
+                    // header. UnityFS explicitly marks serialized entries with bit 4.
+                    if (info.BlockAndDirInfo.DirectoryInfos[i].IsSerialized)
+                        files.Add(manager.LoadAssetsFileFromBundle(bundle, i, false));
             }
             Require(files.Count <= 10000 && files.Sum(f => (long)f.file.Metadata.AssetInfos.Count) <= 1000000, "Unity metadata budget");
             Require(files.Select(f => f.file.Metadata.UnityVersion).Distinct().Count() == 1, "Mixed Unity versions are unsupported");
@@ -165,8 +170,23 @@ public static class Worker
             case AssetClassID.SpriteAtlas:
                 foreach (var pointer in field!["m_PackedSprites"]["Array"].Children) ExportObject(manager, Resolve(manager, asset.file, pointer), output, seen);
                 break;
+            case AssetClassID.MonoBehaviour when output.Job.Target.ResourceType.StartsWith("CriWare.", StringComparison.Ordinal):
+                var bytes = EmbeddedCriBytes(field!, output.Job.Config.InputBytes);
+                var embedded = Path.Combine(Path.GetDirectoryName(output.Job.Output)!, $"embedded-cri-{output.EmbeddedMedia.Count}.bin");
+                File.WriteAllBytes(embedded, bytes); output.EmbeddedMedia.Add(embedded); break;
             default: throw new InvalidDataException($"Unsupported Unity class {asset.info.TypeId}");
         }
+    }
+    public static byte[] EmbeddedCriBytes(AssetTypeValueField field, long limit)
+    {
+        Require(!field["implementation"].IsDummy && !field["references"].IsDummy, "Unsupported CRI asset implementation");
+        var rid = field["implementation"]["rid"].AsLong;
+        var matches = field["references"].AsManagedReferencesRegistry.references.Where(r => r.rid == rid && r.type.ClassName == "CriSerializedBytesAssetImpl").ToArray();
+        Require(matches.Length == 1, "Missing or ambiguous embedded CRI implementation");
+        var bytes = matches[0].data["data"]["Array"].AsByteArray;
+        Require(bytes is { Length: >= 4 } && bytes.LongLength <= limit, "Embedded CRI input budget");
+        Require(bytes.AsSpan().StartsWith("@UTF"u8) || bytes.AsSpan().StartsWith("CRID"u8), "Unsupported embedded CRI container");
+        return bytes;
     }
     private static (byte[] Pixels, int Width, int Height) Texture(AssetExternal asset, Config config)
     {

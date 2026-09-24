@@ -296,13 +296,14 @@ public sealed partial class AssetService : IAsyncDisposable
             if (target.Provider == Catalog.Cri || target.ResourceType.StartsWith("CriWare.", StringComparison.Ordinal))
             {
                 var raw = locations.Where(l => l.Provider == Catalog.Cri).ToArray();
-                Require(raw.Length == 1, "Ambiguous CRI dependencies"); locations = raw;
+                Require(raw.Length <= 1, "Ambiguous CRI dependencies");
+                if (raw.Length == 1) locations = raw; // Otherwise the CRI bytes are embedded in the Unity asset.
             }
             Require(locations.Sum(l => l.Options!.Size) <= Config.ExpandedBytes, "Dependency set budget");
             foreach (var location in locations)
                 leases.Add(await downloadWork.Join(snapshot.Id + ":" + location.Id, ct => DownloadOne(snapshot, location, ct), token));
             var selectedConfig = Config.ForSnapshot(snapshot);
-            var cri = target.Provider == Catalog.Cri || target.ResourceType.StartsWith("CriWare.", StringComparison.Ordinal);
+            var cri = locations.Length == 1 && locations[0].Provider == Catalog.Cri;
             var conversionId = Crypto.Identity(Worker.Profile, cri ? "cri" : target.Internal, cri ? "cri" : target.ResourceType,
                 selectedConfig.CriKey.ToString(System.Globalization.CultureInfo.InvariantCulture), classDataIdentity,
                 string.Join(',', leases.Select(l => l.Value.PlainHash).Order(StringComparer.Ordinal)));

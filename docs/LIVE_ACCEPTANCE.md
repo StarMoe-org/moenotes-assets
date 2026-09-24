@@ -75,3 +75,12 @@ encoding and validation. No game payloads or external validation tools are shipp
 A subsequent pass over all 80 items produced 59 exports, 20 skips and one local
 Windows file-sharing error; this transient error remains subject to retest. This
 is sample validation, not a claim that the full game inventory is exportable.
+
+The full local run exposed raw .resS texture payloads accidentally matching the
+library's serialized-file heuristic. The worker now honors UnityFS directory bit
+0x04 instead. Fourteen affected images exported PNG/WebP successfully on retest.
+Song previews also use CriSerializedBytesAssetImpl with ACB bytes inside Unity
+managed references; the worker now resolves the selected implementation by rid
+and decodes its bytes rather than demanding a separate CRI provider dependency.
+Resource limits are now sampled by the parent, which can terminate the worker
+process tree; the child retains parent-liveness monitoring.

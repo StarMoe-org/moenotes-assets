@@ -4,11 +4,12 @@ namespace MoenotesAssets;
 
 public static class Processes
 {
-    public static async Task<string> Run(string executable, IEnumerable<string> arguments, CancellationToken token, long outputLimit = 1 << 20)
+    public static async Task<string> Run(string executable, IEnumerable<string> arguments, CancellationToken token, long outputLimit = 1 << 20, WorkerJob? limits = null)
     {
         var info = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true };
         foreach (var argument in arguments) info.ArgumentList.Add(argument);
         using var process = Process.Start(info) ?? throw new IOException("Could not start process");
+        using var guard = limits == null ? null : new WorkerGuard(limits, process);
         process.StandardInput.Close();
         using var registration = token.Register(() => { try { process.Kill(true); } catch (InvalidOperationException) { } });
         var stdout = Read(process.StandardOutput, outputLimit, process);
@@ -16,6 +17,7 @@ public static class Processes
         await process.WaitForExitAsync(CancellationToken.None);
         var results = await Task.WhenAll(stdout, stderr);
         token.ThrowIfCancellationRequested();
+        Config.Require(guard?.Failure == null, guard?.Failure ?? "Worker limit exceeded");
         Config.Require(process.ExitCode == 0, $"{Path.GetFileName(executable)} failed: {results[1][..Math.Min(2000, results[1].Length)]}");
         return results[0];
     }
@@ -49,7 +51,7 @@ public static class Processes
             executable = "dotnet"; arguments.Add(assembly);
         }
         arguments.AddRange(["worker", request]);
-        await Run(executable, arguments, timeout.Token);
+        await Run(executable, arguments, timeout.Token, limits: job);
         var result = Json.Read<WorkerResult>(await File.ReadAllTextAsync(request + ".result.json", token));
         if (result.Error != null) throw new InvalidDataException(result.Error);
         Config.Require(result.Files.Length > 0, "Worker produced no files");
