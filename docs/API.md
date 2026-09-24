@@ -135,7 +135,7 @@ Sources include `location`, `download_sha256`, `plain_sha256`. Files include
 source names; names are generated. Metadata includes image/cue/media information.
 Separate snapshot manifests can point to the same content-addressed file bytes.
 Each request has its own task; identical snapshot/key/profile exports are reused.
-Profile: `csharp-json-png-aac-h264-v2`.
+Profile: `csharp-json-png-webp-aac-h264-v3`.
 
 Missing records return 404; exhausted queue 429; invalid requests 400. Body limit
 is 2 MiB. Files support 206/304/416; mismatched If-Range sends the full file.
@@ -198,3 +198,16 @@ resource completion after at least 10 seconds since the last update. A single
 long-running resource can therefore leave counts unchanged for longer than 10
 seconds. Terminal task logs include final completed/total and failure counts.
 Logs go to stderr so CLI JSON on stdout remains usable; API keys are never logged.
+
+Image exports include both image/png and lossless image/webp files with the same
+label and dimensions, each with its own file ID. The profile version changed so
+new requests do not reuse older PNG-only manifests. Existing file URLs remain
+valid. WebP encoding uses SkiaSharp in the worker, without an FFmpeg subprocess.
+
+Tasks report `reused`, and item results report boolean `reused`. A manifest's
+optional `reused_from` identifies the original conversion. Identical verified
+plaintext dependencies, target, codec profile, CRI key and class database can
+reuse decoding/transcoding across locales/regions while preserving scoped source
+observations and manifests. This is independent of file-byte deduplication. Each
+new source scope still downloads and verifies its inputs; catalog hashes alone
+never skip downloads. Missing referenced output blobs trigger fresh conversion.

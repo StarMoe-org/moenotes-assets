@@ -2,7 +2,7 @@
 
 C# / .NET 10 service and CLI for retrieving and exporting Our Notes Android assets.
 It parses Addressables binary-v2 catalogs, downloads and decrypts dependencies,
-and exports TextAsset content, PNG images, AAC audio and H.264 video.
+and exports TextAsset content, PNG/WebP image pairs, AAC audio and H.264 video.
 
 This is an independent interoperability project. No game login, player credentials,
 Unity Editor, Python, Rust runtime or proprietary CRI plugin is required.
@@ -71,14 +71,14 @@ See [API](docs/API.md) for selection, cancellation, manifests and file ranges.
 | Input | Output |
 |---|---|
 | TextAsset (including gzip) | JSON, SUS, UTF-8 text, or binary payload |
-| Texture2D, Sprite, populated SpriteAtlas | PNG; sprite rectangle/rotation, triangle mask and split alpha |
+| Texture2D, Sprite, populated SpriteAtlas | PNG + lossless WebP; sprite rectangle/rotation, triangle mask and split alpha |
 | ACB with embedded HCA | AAC-LC M4A with cue-name metadata in its manifest |
 | Supported USM MPEG-2 / IVF video with optional ADX/HCA | H.264/AAC MP4 |
 
 Asset paths are resolved exactly through bundle containers. Original names are
 labels, never output filesystem paths. Known unsupported types and ambiguous
 labels are recorded as skipped before download; decoder/data errors still fail.
-raw resource containers are not advertised as successful exports.
+Raw resource containers are not advertised as successful exports.
 
 Audio uses 96 kbps mono / 192 kbps stereo AAC without normalization. Video uses
 libx264 CRF 20, medium, yuv420p and faststart; odd dimensions are padded to even.
@@ -188,8 +188,9 @@ them and are removed on the last release. Extraction staging is removed after
 success, failure or cancellation; startup cleans crash leftovers and unreferenced
 blobs. Referenced output files, manifests and catalog history are retained without
 automatic eviction. Changed versions therefore still grow storage over time.
-Content-addressed outputs deduplicate disk bytes after extraction; they do not
-promise to skip cross-snapshot downloads or repeated decoding. Metadata candidate
+Content-addressed outputs deduplicate disk bytes. Verified plaintext dependencies
+and matching conversion inputs also reuse decoding across snapshots. First
+downloads are still required. Metadata candidate
 hashes alone never authorize reusing unverified remote content.
 
 ## One-request all-language processing

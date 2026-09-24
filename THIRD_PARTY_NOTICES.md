@@ -30,3 +30,8 @@ The previous Rust implementation and its dependency inventory have been removed
 from this branch. Notices for code adapted into C# remain listed above.
 No proprietary CRI plugin, game resource or player credential is included.
 No public image release is configured.
+
+- SkiaSharp 3.119.0 (MIT) and its Linux native package provide in-process lossless
+  WebP encoding. Skia and native dependencies retain their own licenses; see
+  `third_party/SkiaSharp-LICENSE.txt` and
+  `third_party/SkiaSharp-THIRD-PARTY-NOTICES.txt`.

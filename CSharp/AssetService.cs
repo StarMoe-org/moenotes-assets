@@ -20,11 +20,13 @@ public sealed partial class AssetService : IAsyncDisposable
     private readonly ConcurrentDictionary<string, Task> running = new();
     private readonly CancellationTokenSource shutdown = new();
     private readonly Dictionary<string, WeakReference<SemaphoreSlim>> publicationGates = new();
+    private readonly string classDataIdentity;
     private sealed record Download(WorkerInput Input, string Hash, string PlainHash, string Directory, IDisposable Reservation);
     public static long Now => DateTimeOffset.UtcNow.ToUnixTimeSeconds();
     public AssetService(Config config)
     {
         config.Validate(); Config = config with { DataDir = Path.GetFullPath(config.DataDir) };
+        classDataIdentity = Config.ClassData.Length == 0 ? "embedded" : Crypto.Sha256(File.ReadAllBytes(Config.ClassData));
         Directory.CreateDirectory(Config.DataDir);
         Require(!System.IO.File.Exists(Path.Combine(Config.DataDir, "index.sqlite")), "Legacy Rust storage detected. Configure a new data_dir; automatic import is not supported.");
         instance = new FileStream(Path.Combine(Config.DataDir, "instance.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
@@ -207,7 +209,7 @@ public sealed partial class AssetService : IAsyncDisposable
                                 using var lease = await exportWork.Join(id, t => ExportOne(snapshot, catalog, key, id, t), ct);
                                 manifest = lease.Value;
                             }
-                            item = new(key, manifest.Id, null);
+                            item = new(key, manifest.Id, null, Reused: manifest.ReusedFrom != null);
                         }
                     }
                     catch (Exception e) { item = new(key, null, e.Message); }
@@ -216,9 +218,9 @@ public sealed partial class AssetService : IAsyncDisposable
                         results.Add(item);
                         if ((results.Count % 20 == 0 && progress.Elapsed >= TimeSpan.FromSeconds(1)) || progress.Elapsed >= TimeSpan.FromSeconds(10))
                         {
-                            task = task with { Completed = results.Count, Skipped = results.Count(r => r.SkipReason != null), Results = results.OrderBy(r => r.Key, StringComparer.Ordinal).ToArray(), Updated = Now };
+                            task = task with { Completed = results.Count, Skipped = results.Count(r => r.SkipReason != null), Reused = results.Count(r => r.Reused), Results = results.OrderBy(r => r.Key, StringComparer.Ordinal).ToArray(), Updated = Now };
                             Store.Put("task", task.Id, task);
-                            Console.Error.WriteLine($"[task {task.Id}] export region={snapshot.Region} locale={snapshot.Locale} progress={results.Count}/{keys.Length} succeeded={results.Count(r => r.ExportId != null)} skipped={task.Skipped} failed={results.Count(r => r.Error != null)}");
+                            Console.Error.WriteLine($"[task {task.Id}] export region={snapshot.Region} locale={snapshot.Locale} progress={results.Count}/{keys.Length} succeeded={results.Count(r => r.ExportId != null)} skipped={task.Skipped} reused={task.Reused} failed={results.Count(r => r.Error != null)}");
                             progress.Restart();
                         }
                     }
@@ -227,7 +229,7 @@ public sealed partial class AssetService : IAsyncDisposable
             catch (OperationCanceledException) when (token.IsCancellationRequested) { }
             var successes = results.Count(r => r.ExportId != null);
             var skipped = results.Count(r => r.SkipReason != null);
-            return task with { Completed = results.Count, Skipped = skipped, Results = results.OrderBy(r => r.Key, StringComparer.Ordinal).ToArray(), State = token.IsCancellationRequested ? "cancelled" : successes + skipped == keys.Length ? "succeeded" : successes > 0 ? "partial" : "failed" };
+            return task with { Completed = results.Count, Skipped = skipped, Reused = results.Count(r => r.Reused), Results = results.OrderBy(r => r.Key, StringComparer.Ordinal).ToArray(), State = token.IsCancellationRequested ? "cancelled" : successes + skipped == keys.Length ? "succeeded" : successes > 0 ? "partial" : "failed" };
         });
     }
     private async Task<Download> DownloadOne(Snapshot snapshot, Location location, CancellationToken token)
@@ -284,6 +286,7 @@ public sealed partial class AssetService : IAsyncDisposable
             }
         }
         await publication.WaitAsync(token);
+        SemaphoreSlim? conversionGate = null; var conversionHeld = false;
         var leases = new List<SharedWork<Download>.Lease>(); string? stage = null; var moved = false;
         var destination = Path.Combine(Config.DataDir, "exports", id);
         try
@@ -298,6 +301,30 @@ public sealed partial class AssetService : IAsyncDisposable
             Require(locations.Sum(l => l.Options!.Size) <= Config.ExpandedBytes, "Dependency set budget");
             foreach (var location in locations)
                 leases.Add(await downloadWork.Join(snapshot.Id + ":" + location.Id, ct => DownloadOne(snapshot, location, ct), token));
+            var selectedConfig = Config.ForSnapshot(snapshot);
+            var cri = target.Provider == Catalog.Cri || target.ResourceType.StartsWith("CriWare.", StringComparison.Ordinal);
+            var conversionId = Crypto.Identity(Worker.Profile, cri ? "cri" : target.Internal, cri ? "cri" : target.ResourceType,
+                selectedConfig.CriKey.ToString(System.Globalization.CultureInfo.InvariantCulture), classDataIdentity,
+                string.Join(',', leases.Select(l => l.Value.PlainHash).Order(StringComparer.Ordinal)));
+            lock (publicationGates)
+            {
+                var gateKey = "conversion:" + conversionId;
+                if (!publicationGates.TryGetValue(gateKey, out var reference) || !reference.TryGetTarget(out conversionGate))
+                { conversionGate = new(1); publicationGates[gateKey] = new(conversionGate); }
+            }
+            await conversionGate.WaitAsync(token); conversionHeld = true;
+            var previousId = Store.Get<string>("conversion", conversionId);
+            var previous = previousId == null ? null : Store.Get<Manifest>("export", previousId);
+            if (previous != null && previous.Files.All(f => File.Exists(Blobs.PathFor(f.Sha256)) && new FileInfo(Blobs.PathFor(f.Sha256)).Length == f.Bytes))
+            {
+                Require(previous.Files.Sum(f => f.Bytes) <= Config.OutputBytes, "Reused output size budget");
+                var copied = previous.Files.Select(f => f with { Id = Crypto.Identity(id, f.Name), Label = f.MediaType == "video/mp4" ? target.Key : f.Label }).ToArray();
+                var reused = new Manifest(id, snapshot.Id, key, Worker.Profile, leases.Select(l => new Source(l.Value.Input.Location, l.Value.Hash, l.Value.PlainHash)).ToArray(), copied, snapshot.Region, previous.Id);
+                stage = Path.Combine(Config.DataDir, "tmp", "reuse-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(stage);
+                await File.WriteAllTextAsync(Path.Combine(stage, "manifest.json"), Json.Write(reused), token);
+                token.ThrowIfCancellationRequested(); Directory.Move(stage, destination); moved = true;
+                Store.Publish(reused, true); moved = false; return reused;
+            }
             using var reservation = Budget.Reserve(Config.OutputBytes + Config.ExpandedBytes * 2);
             stage = Path.Combine(Config.DataDir, "tmp", "job-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(stage);
             var output = Path.Combine(stage, "out");
@@ -332,12 +359,13 @@ public sealed partial class AssetService : IAsyncDisposable
             foreach (var file in files) Blobs.Publish(Path.Combine(output, file.Name), file.Sha256, file.Bytes);
             await File.WriteAllTextAsync(Path.Combine(output, "manifest.json"), Json.Write(manifest), token);
             token.ThrowIfCancellationRequested(); Directory.Move(output, destination); moved = true;
-            Store.Publish(manifest, true); moved = false; return manifest;
+            Store.Publish(manifest, true); moved = false;
+            Store.Put("conversion", conversionId, manifest.Id); return manifest;
         }
         finally
         {
             try { if (moved) RemoveTree(destination); if (stage != null) RemoveTree(stage); }
-            finally { foreach (var lease in leases) lease.Dispose(); publication.Release(); }
+            finally { foreach (var lease in leases) lease.Dispose(); if (conversionHeld) conversionGate!.Release(); publication.Release(); }
         }
     }
     public TaskInfo StartVerify(VerifyRequest request)

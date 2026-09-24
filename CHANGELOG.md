@@ -43,3 +43,6 @@ changes require explicit release notes; a frozen stable API is not claimed.
 - Fix full-band HCA 3.0 noise decoding, use USM frame timing instead of raw MPEG
   duration estimates, omit unnecessary script metadata for supported data exports,
   collapse export aliases and report unsupported inputs as skipped.
+- Export PNG and lossless WebP together using in-process SkiaSharp encoding.
+- Reuse completed conversions across scopes only after verifying plaintext source
+  hashes and conversion inputs; retain separate manifests and report reuse counts.

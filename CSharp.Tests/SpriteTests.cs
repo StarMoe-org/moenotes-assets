@@ -46,7 +46,8 @@ public class SpriteTests
         var serialized = Serialize([(7, 28, texture.WriteToByteArray()), (8, 213, sprite.WriteToByteArray()), (9, 687078895, atlas.WriteToByteArray()), (1, 142, bundle.WriteToByteArray())]); manager.UnloadAll(true);
         var bytes = Fixture.Bundle(serialized); var path = Path.Combine(dir.Path, "sprite.bundle"); File.WriteAllBytes(path, bytes); var cat = Catalog.Parse(Fixture.Catalog(bytes.Length, ~BinaryTools.Crc32(serialized)));
         var job = new WorkerJob(new Config { CdnRoot = "https://cdn.invalid" }, cat.Target(Fixture.Key), [new(cat.Closure(Fixture.Key)[0], path)], Path.Combine(dir.Path, "out"));
-        var result = await Processes.Worker(job, dir.Path, CancellationToken.None); Assert.Single(result); Assert.Equal("image/png", result[0].MediaType); Assert.Equal("sprite", result[0].Label);
+        var result = await Processes.Worker(job, dir.Path, CancellationToken.None); Assert.Equal(2, result.Length); Assert.Equal("image/png", result[0].MediaType); Assert.Equal("image/webp", result[1].MediaType); Assert.Equal("sprite", result[0].Label);
+        TextureTests.AssertWebpMatchesPng(job, result);
         var png = File.ReadAllBytes(Path.Combine(job.Output, result[0].Name)); using var raw = new MemoryStream();
         for (int at = 8; at < png.Length;) { var length = BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(at)); if (png.AsSpan(at + 4, 4).SequenceEqual("IDAT"u8)) raw.Write(png, at + 8, length); at += 12 + length; }
         raw.Position = 0; using var zlib = new System.IO.Compression.ZLibStream(raw, System.IO.Compression.CompressionMode.Decompress); var pixels = BinaryTools.ReadLimited(zlib, 100);

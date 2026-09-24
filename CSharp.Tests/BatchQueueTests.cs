@@ -66,6 +66,7 @@ public class BatchQueueTests
             Assert.Equal(HttpStatusCode.OK, (await http.GetAsync($"/tasks/batches/{first.Id}")).StatusCode);
             Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync("/tasks/batches/missing")).StatusCode);
             Assert.Equal(3, service.Store.All<Manifest>("export").Length);
+            Assert.Equal(2, service.Store.All<Manifest>("export").Count(m => m.ReusedFrom != null));
         }
         finally { release.TrySetResult(); await api.StopAsync(); await cdn.StopAsync(); }
     }

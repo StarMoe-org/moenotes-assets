@@ -4,13 +4,15 @@ using AssetsTools.NET.Texture;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using SkiaSharp;
+using System.Runtime.InteropServices;
 using static MoenotesAssets.Config;
 namespace MoenotesAssets;
 
 public static class Worker
 {
     // The C# implementation has its own identity: codec/library changes can change output bytes.
-    public const string Profile = "csharp-json-png-aac-h264-v2";
+    public const string Profile = "csharp-json-png-webp-aac-h264-v3";
     public sealed class Output(WorkerJob job)
     {
         public WorkerJob Job { get; } = job;
@@ -187,6 +189,17 @@ public static class Worker
         for (int y = 0; y < height; y++) Buffer.BlockCopy(pixels, y * width * 4, flipped, (height - 1 - y) * width * 4, width * 4);
         var path = output.PathFor("png"); BinaryTools.Png(path, flipped, width, height);
         output.Add(path, label, "image/png", new { width, height });
+        var pinned = GCHandle.Alloc(flipped, GCHandleType.Pinned);
+        try
+        {
+            using var pixmap = new SKPixmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Unpremul), pinned.AddrOfPinnedObject());
+            using var encoded = pixmap.Encode(new SKWebpEncoderOptions(SKWebpEncoderCompression.Lossless, 50));
+            Require(encoded != null, "WebP encoding failed");
+            var webp = output.PathFor("webp");
+            using (var stream = File.Create(webp)) encoded!.SaveTo(stream);
+            output.Add(webp, label, "image/webp", new { width, height, lossless = true });
+        }
+        finally { pinned.Free(); }
     }
     private static void ExportSprite(AssetsManager manager, AssetExternal asset, Output output, string label)
     {

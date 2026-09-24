@@ -39,6 +39,11 @@ public class BundleApiTests
         var verify = await http.PostAsJsonAsync("/bundles/verify", new VerifyRequest([bundle.Id], Snapshot: tw), Json.Options); Assert.Equal(HttpStatusCode.Accepted, verify.StatusCode);
         var task = Json.Read<TaskInfo>(await verify.Content.ReadAsStringAsync()); Assert.Equal("succeeded", (await service.Wait(task.Id)).State); Assert.Equal(1, count);
         var detail = Json.Read<BundleEntry>(await http.GetStringAsync($"/bundles/{bundle.Id}?snapshot={tw}")); Assert.NotNull(detail.PlainSha256); Assert.NotEqual(detail.PlainSha256, detail.DownloadSha256);
+        var firstExport = await service.Wait(service.StartExport(new(Keys: [Fixture.Key], Snapshot: tw)).Id);
+        var otherRegion = await service.Wait(service.StartExport(new(Keys: [Fixture.Key], Snapshot: kr)).Id);
+        Assert.Equal("succeeded", firstExport.State); Assert.Equal("succeeded", otherRegion.State);
+        Assert.Equal(1, otherRegion.Reused);
+        Assert.Equal(firstExport.Results[0].ExportId, service.Manifest(otherRegion.Results[0].ExportId!)!.ReusedFrom);
         using var preflight = new HttpRequestMessage(HttpMethod.Options, "/exports"); preflight.Headers.Add("Origin", "http://localhost:3000"); preflight.Headers.Add("Access-Control-Request-Method", "POST"); var cors = await http.SendAsync(preflight); Assert.Contains(allowedOrigin, cors.Headers.GetValues("Access-Control-Allow-Origin"));
         await app.StopAsync(); await service.DisposeAsync(); Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(dir.Path, "tmp"))); await cdn.StopAsync();
     }
