@@ -1,10 +1,9 @@
 * text=auto
-*.rs text eol=lf
 *.toml text eol=lf
 *.md text eol=lf
 *.yml text eol=lf
 # Preserve upstream notices byte-for-byte, including line endings and whitespace.
-third_party/licenses/** -text -whitespace
+third_party/*-LICENSE.txt -text -whitespace
 *.cs text eol=lf
 *.csproj text eol=lf
 *.slnx text eol=lf

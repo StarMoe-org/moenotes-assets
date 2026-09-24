@@ -26,7 +26,7 @@ Project code is MIT licensed. This does not relicense dependencies or game asset
   package notices remain in `/usr/share/doc`. Redistribution must satisfy the
   applicable source-distribution and license obligations.
 
-The retained Rust reference implementation still has its original dependency
-notices in `third_party/licenses` and version inventory in `Cargo.lock`. Those
-crates are not compiled into the C# runtime. No proprietary CRI plugin, game
-resource or player credential is included. No public image release is configured.
+The previous Rust implementation and its dependency inventory have been removed
+from this branch. Notices for code adapted into C# remain listed above.
+No proprietary CRI plugin, game resource or player credential is included.
+No public image release is configured.

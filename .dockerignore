@@ -6,12 +6,6 @@
 **/TestResults
 data
 config.toml
-target
-src
-tests
-Cargo.toml
-Cargo.lock
-rust-toolchain.toml
 *.log
 artifacts
 CSharp.Tests

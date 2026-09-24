@@ -90,8 +90,8 @@ The embedded class database can be overridden with `class_data = "/path/classdat
 Use a **new data directory** for this C# release. It stores `csharp.sqlite`, retained
 catalog binaries, immutable exports, and temporary jobs. A directory containing
 the old Rust `index.sqlite` is rejected before cleanup; automatic migration of
-old tasks/exports is not implemented. The original Rust sources remain in `src/`
-and `tests/` as a reference, but default build, CI and Docker now use C#.
+old tasks/exports is not implemented. This branch contains only the C# implementation;
+the previous Rust implementation remains available in Git history.
 The new API omits the old `/v1` prefix; see the API document for exact routes.
 
 Concurrent requests share downloads and exports. A cancelled caller does not

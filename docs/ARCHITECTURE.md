@@ -49,8 +49,8 @@ A single data-directory lock excludes concurrent owners.
 
 The C# store uses `csharp.sqlite`; a legacy `index.sqlite` causes startup rejection
 before cleanup. Old Rust data is not imported. Retain it separately and use a new
-volume. The original Rust code is retained only as a migration reference; the
-solution, CI, Dockerfile and current docs all target C#.
+volume. This branch contains only C# source and tests; the previous Rust code is
+available in Git history. The solution, CI and Dockerfile all target C#.
 
 Known boundaries: Android catalog v2; no game login/discovery, arbitrary Unity
 object export, external AWB resolution, CPK, multichannel/alpha/multi-track media,

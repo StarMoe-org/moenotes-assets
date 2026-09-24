@@ -34,3 +34,5 @@ changes require explicit release notes; a frozen stable API is not claimed.
 - Add configurable frontend CORS and storage statistics; retain automatic
   temporary cleanup without automatic history/output eviction.
 - Validate five live TW language catalogs and small download/export samples.
+- Remove Rust source, tests, Cargo/toolchain files and obsolete dependency notices
+  from the C# branch; retain notices for code adapted into the C# implementation.
