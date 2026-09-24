@@ -124,24 +124,28 @@ public static class Api
         // Path routes: /{locale}/{key}/{label}.{ext} serves a file, /{locale}/{key}/ lists them. Literal routes above take
         // precedence, and a first segment that is not a configured locale is 404. A path follows the newest published
         // export, so its content can change: short cache plus the content ETag, unlike immutable /files/{id}.
+        // Resolution is cached in memory (see AssetService.ResolvePath), so hits and 304s do not touch SQLite. Misses
+        // are cached too and answer with a short public cache, so repeated requests for absent paths stop at the CDN.
         app.MapMethods("/{locale}/{**path}", ["GET", "HEAD"], (string locale, string? path, HttpContext context) =>
         {
-            var notFound = Results.NotFound(new { error = "No published file at this path" });
+            IResult NotFound()
+            {
+                context.Response.Headers.CacheControl = "public,max-age=60";
+                return Results.NotFound(new { error = "No published file at this path" });
+            }
             path ??= "";
             if (path.Length == 0 || context.Request.Path.Value!.EndsWith('/'))
             {
-                var listed = service.PublishedExport(locale, path.TrimEnd('/'));
-                if (listed == null) return notFound;
+                var listed = service.ResolvePath(locale, path.TrimEnd('/'));
+                if (listed == null) return NotFound();
                 context.Response.Headers.CacheControl = "public,max-age=60";
-                return Results.Json(AssetService.Listing(locale, listed), Json.Options);
+                return Results.Json(listed.Listing, Json.Options);
             }
             var slash = path.LastIndexOf('/');
-            var manifest = slash > 0 ? service.PublishedExport(locale, path[..slash]) : null;
-            var matches = manifest == null ? [] : AssetService.PathMatches(manifest, path[(slash + 1)..]);
-            if (matches.Length == 0) return notFound;
-            if (matches.Any(f => f.Sha256 != matches[0].Sha256))
-                return Results.Conflict(new { error = "Several files share this name; use their /files/{id} from the key listing" });
-            return ServeFile(context, matches[0].Id, "public,max-age=600");
+            var resolved = slash > 0 ? service.ResolvePath(locale, path[..slash]) : null;
+            if (resolved == null || !resolved.Files.TryGetValue(path[(slash + 1)..], out var file)) return NotFound();
+            if (file == null) return Results.Conflict(new { error = "Several files share this name; use their /files/{id} from the key listing" });
+            return ServeFile(context, file.Id, "public,max-age=600");
         });
 
         return app;

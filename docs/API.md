@@ -73,8 +73,14 @@ The listing returns `{locale,key,snapshot,files}`; each file has `path`, `file`
 (`/files/{id}`), `label`, `media_type`, `bytes`, `sha256` and `metadata`. When files
 with different content share a label and extension, their `path` is null and the
 path itself answers 409; use their `file` URLs. Labels containing `/` have no path.
-Unknown locales, keys without a published export and unknown names are 404. Path
-routes never start downloads or exports.
+Unknown locales, keys without a published export and unknown names are 404 with
+`Cache-Control: public,max-age=60`. Path routes never start downloads or exports.
+
+Resolutions, including misses, are cached in memory and validated against store
+versions on each hit: a publish invalidates its key and a catalog index invalidates
+all paths, so new exports are visible at once. Hits and 304 responses do not touch
+SQLite. Request-path reads (`/files/{id}`, `/exports/{id}`, path routes) use pooled
+read-only SQLite connections, which WAL lets run concurrently with the writer.
 
 ## Selection and pagination
 

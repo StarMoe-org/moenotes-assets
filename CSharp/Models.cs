@@ -13,6 +13,7 @@ public static class Json
     public static readonly JsonSerializerOptions Strict = new(Options) { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
     public static string Write<T>(T value) => JsonSerializer.Serialize(value, Options);
     public static T Read<T>(string value) => JsonSerializer.Deserialize<T>(value, Options) ?? throw new InvalidDataException("Null JSON document");
+    public static T Read<T>(ReadOnlySpan<byte> utf8) => JsonSerializer.Deserialize<T>(utf8, Options) ?? throw new InvalidDataException("Null JSON document");
 }
 public sealed record Snapshot(string Id, string ContentSha256, string Region, string Locale, string BiliVersion,
     string CdnRoot, string RemoteHash, long Created);

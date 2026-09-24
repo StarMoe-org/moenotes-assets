@@ -80,3 +80,10 @@ changes require explicit release notes; a frozen stable API is not claimed.
 - Serve published files by asset path: `/{locale}/{key}/{label}{extension}`, plus a
   `/{locale}/{key}/` listing. Paths follow the newest snapshot that has published the
   key, use a 10-minute cache with the content ETag, and never start work.
+- Make request paths withstand load: path resolutions (including misses), scope
+  snapshot lists and file records are cached in memory, validated by per-key and
+  per-catalog versions; request reads use pooled read-only WAL connections instead of
+  the writer's lock; misses use one query for all candidate exports and parse UTF-8
+  directly; writer-side `Get` parses JSON after releasing the lock. Path 404s are
+  publicly cacheable for 60 seconds. Locally, reads during a long write went from
+  97 to 3,638 requests/s (p50 2.9 s to 70 ms) and 304s stopped querying SQLite.

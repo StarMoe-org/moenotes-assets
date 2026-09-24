@@ -34,7 +34,8 @@ public class HttpTests
             var task = Json.Read<TaskInfo>(await refresh.Content.ReadAsStringAsync()); var refreshed = await service.Wait(task.Id); Assert.Equal("succeeded", refreshed.State);
             var assets = await http.GetStringAsync("/assets"); Assert.Contains(Fixture.Key, assets);
             var pathUrl = $"/zh-Hant/{Fixture.Key}/fixture.json";
-            Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync(pathUrl)).StatusCode);
+            // The miss is cached and publicly cacheable; publishing must still make the path visible at once.
+            var miss = await http.GetAsync(pathUrl); Assert.Equal(HttpStatusCode.NotFound, miss.StatusCode); Assert.Equal(TimeSpan.FromSeconds(60), miss.Headers.CacheControl!.MaxAge);
             var first = service.StartExport(new(Keys: [Fixture.Key])); var second = service.StartExport(new(Keys: [Fixture.Key]));
             var results = await Task.WhenAll(service.Wait(first.Id), service.Wait(second.Id));
             foreach (var result in results) Assert.True(result.State == "succeeded", Json.Write(result));

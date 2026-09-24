@@ -171,6 +171,7 @@ public sealed partial class Store
                 Put("setting", "current", snapshot.Id); // compatibility only; selection uses the scoped pointer above.
             }
             transaction.Commit();
+            Interlocked.Increment(ref snapshotGeneration);
             Execute("PRAGMA wal_checkpoint(TRUNCATE)");
         }
     }

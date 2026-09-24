@@ -412,13 +412,12 @@ public sealed partial class AssetService : IAsyncDisposable
             return task with { State = token.IsCancellationRequested ? "cancelled" : success == ids.Length ? "succeeded" : success > 0 ? "partial" : "failed" };
         });
     }
-    public FileRecord? LookupFile(string id) => Store.Get<FileRecord>("file", id);
-    public Manifest? Manifest(string id) => Store.Get<Manifest>("export", id);
+    public Manifest? Manifest(string id) => Store.Find<Manifest>("export", id);
     public async ValueTask DisposeAsync()
     {
         shutdown.Cancel(); await batchRunner; await Task.WhenAll(running.Values.ToArray());
         // Shared producers may still be unwinding after their last waiter cancelled.
         await exportWork.Drain(); await downloadWork.Drain();
-        http.Dispose(); Store.Dispose(); instance.Dispose(); shutdown.Dispose();
+        http.Dispose(); pathCache.Dispose(); Store.Dispose(); instance.Dispose(); shutdown.Dispose();
     }
 }
