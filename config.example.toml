@@ -1,4 +1,4 @@
-# No authentication is implemented. Use a private network or an authenticated proxy.
+# Set MOENOTES_API_KEY in the environment for administrative HTTP routes, not here.
 listen = "127.0.0.1:8091"
 data_dir = "data"
 region = "hk"

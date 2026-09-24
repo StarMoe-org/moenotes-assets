@@ -1,9 +1,25 @@
 # HTTP API — C# edition
 
-Base URL: `http://127.0.0.1:8091`. JSON uses snake_case. No `/v1` prefix,
-HTTP authentication or built-in browser UI; `/` returns 404. An external frontend
+Base URL: `http://127.0.0.1:8091`. JSON uses snake_case. No `/v1` prefix
+or built-in browser UI; `/` returns 404. An external frontend
 can use `cors_origins = ["http://localhost:3000"]` in TOML (exact origins), or
 `cors_origins = ["*"]` to allow any origin without cross-origin credentials.
+
+## Authentication
+
+Set `MOENOTES_API_KEY` in the server environment (Zeabur service variables, or
+Docker `-e MOENOTES_API_KEY`). It is read at startup, not stored in TOML/SQLite.
+All POST routes, `/tasks/{id}` and `/storage` require the header
+`Authorization: Bearer <key>`. Other mutations are also denied without a key.
+Missing/incorrect credentials return 401 with `WWW-Authenticate: Bearer`;
+an unset/blank environment variable disables protected routes with 503.
+Protected responses use `Cache-Control: no-store`. Keys in query strings or
+cookies are not accepted. Change the environment variable and restart to rotate.
+
+Catalog/asset/bundle/diff browsing, published manifests/files and health checks
+remain public. CORS preflight accepts Authorization without requiring a key on
+the OPTIONS request. CORS does not grant access to protected requests. Send the
+key from a trusted backend/admin client over HTTPS, not public frontend code.
 
 | Method | Path | Result |
 |---|---|---|

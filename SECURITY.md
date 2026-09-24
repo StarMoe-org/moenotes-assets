@@ -1,8 +1,11 @@
 # Security Policy
 
-This alpha has no authentication. Bind to loopback or use a trusted network and
-an authenticated, rate-limited reverse proxy. Any caller can consume CPU, network
-bandwidth and storage. There is no claim of safe anonymous Internet deployment.
+Administrative HTTP routes require a Bearer key configured in `MOENOTES_API_KEY`:
+all mutations, task queries and storage statistics. Missing configuration disables
+these routes. Public browsing and published files remain anonymous. Use HTTPS,
+keep the key in server-side secret storage, and restart to rotate it. No user
+accounts or per-user permissions are provided. Use a rate-limited reverse proxy
+for public reads and do not embed the administrative key in a public frontend.
 
 Keep the data directory private to the service UID. Database and filesystem
 contents are trusted local state; do not allow other users to replace indexed

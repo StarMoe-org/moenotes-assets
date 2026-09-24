@@ -26,7 +26,7 @@ public class HttpTests
         string exportId, fileId;
         await using (var service = new AssetService(config))
         {
-            await using var app = Api.Build(service, "http://127.0.0.1:0"); await app.StartAsync(); using var http = new HttpClient { BaseAddress = new Uri(Address(app)) };
+            await using var app = Api.Build(service, "http://127.0.0.1:0", apiKey: "integration-test-key"); await app.StartAsync(); using var http = new HttpClient { BaseAddress = new Uri(Address(app)) }; http.DefaultRequestHeaders.Authorization = new("Bearer", "integration-test-key");
             Assert.Equal(HttpStatusCode.OK, (await http.GetAsync("/health")).StatusCode);
             Assert.Equal(HttpStatusCode.OK, (await http.GetAsync("/ready")).StatusCode);
             Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync("/files/unknown")).StatusCode); Assert.Equal(0, downloads);

@@ -24,8 +24,12 @@ The listener defaults to `127.0.0.1:8091`. All configuration fields are validate
 unknown TOML keys fail at startup. `cdn_root`, region, locale and resource version
 are explicit; server discovery and game authentication are not implemented.
 
-**There is no HTTP authentication.** Use a trusted network or an authenticated,
-rate-limited reverse proxy. A caller can initiate expensive downloads/transcodes.
+Set the **`MOENOTES_API_KEY` environment variable** before starting the HTTP server.
+All POST requests, task queries and storage statistics require
+`Authorization: Bearer <key>`. Without a configured key these routes return 503;
+missing/incorrect credentials return 401. Browsing, manifests, files and health
+checks remain public. Use HTTPS and keep the key out of public frontend code.
+CLI commands operate locally and do not require an API key.
 
 ## CLI
 
@@ -47,13 +51,14 @@ pagination. `--version` prints the application version.
 ## HTTP
 
 ```sh
-curl -X POST http://127.0.0.1:8091/catalog/refresh
-curl http://127.0.0.1:8091/tasks/TASK_ID
+curl -X POST http://127.0.0.1:8091/catalog/refresh -H "Authorization: Bearer $MOENOTES_API_KEY"
+curl http://127.0.0.1:8091/tasks/TASK_ID -H "Authorization: Bearer $MOENOTES_API_KEY"
 curl 'http://127.0.0.1:8091/assets?prefix=Live%2FMusicScore%2F&limit=20'
 curl -X POST http://127.0.0.1:8091/exports \
+  -H "Authorization: Bearer $MOENOTES_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"keys":["Live/MusicScore/0007/0007_03"]}'
-curl http://127.0.0.1:8091/tasks/TASK_ID
+curl http://127.0.0.1:8091/tasks/TASK_ID -H "Authorization: Bearer $MOENOTES_API_KEY"
 curl http://127.0.0.1:8091/exports/EXPORT_ID
 curl http://127.0.0.1:8091/files/FILE_ID -o chart.json
 ```
@@ -115,12 +120,17 @@ no automatic eviction. Downloads do not implement byte-range resume or retries.
 docker build -t moenotes-assets:local .
 docker volume create moenotes-assets-data
 docker run --rm -p 127.0.0.1:8091:8091 \
+  -e MOENOTES_API_KEY \
   -v moenotes-assets-data:/data \
   -v "$PWD/config.toml:/etc/moenotes-assets/config.toml:ro" \
   moenotes-assets:local
 ```
 
 Set `listen = "0.0.0.0:8091"` and `data_dir = "/data"` in container configuration.
+Export `MOENOTES_API_KEY` in the host shell before running Docker. On Zeabur, add
+`MOENOTES_API_KEY` as a service environment variable and redeploy. Use a long
+random secret (for example, `openssl rand -hex 32`), not a TOML setting. Changing
+the key requires restarting the service and invalidates the old key.
 The container runs as UID/GID 65532. Bind mounts must be writable by that user.
 `/health` reports liveness; `/ready` checks SQLite and writable temporary storage.
 

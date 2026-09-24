@@ -55,7 +55,7 @@ available in Git history. The solution, CI and Dockerfile all target C#.
 Known boundaries: Android catalog v2; no game login/discovery, arbitrary Unity
 object export, external AWB resolution, CPK, multichannel/alpha/multi-track media,
 byte-range download resume, automatic retry, multi-instance ownership, remote
-object storage, authentication, or export eviction. Synthetic tests run without
+object storage, user accounts, or export eviction. Synthetic tests run without
 publisher resources; real game revisions require separate acceptance testing.
 
 ## Relational catalog index and content-addressed outputs

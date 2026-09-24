@@ -1,11 +1,15 @@
 using Microsoft.Net.Http.Headers;
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 namespace MoenotesAssets;
 
 public static class Api
 {
-    public static WebApplication Build(AssetService service, string? url = null)
+    public static WebApplication Build(AssetService service, string? url = null, string? apiKey = null)
     {
+        apiKey ??= Environment.GetEnvironmentVariable("MOENOTES_API_KEY");
+        var keyHash = string.IsNullOrWhiteSpace(apiKey) ? null : SHA256.HashData(Encoding.UTF8.GetBytes(apiKey));
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [], ApplicationName = typeof(Api).Assembly.GetName().Name });
         builder.WebHost.UseUrls(url ?? $"http://{service.Config.Listen}");
         builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 2 << 20);
@@ -18,10 +22,39 @@ public static class Api
         {
             if (service.Config.CorsOrigins.Contains("*")) policy.AllowAnyOrigin();
             else policy.WithOrigins(service.Config.CorsOrigins);
-            policy.WithMethods("GET", "HEAD", "POST").WithHeaders("Content-Type", "Range", "If-None-Match", "If-Range").WithExposedHeaders("ETag", "Content-Range", "Accept-Ranges", "Content-Length", "Location");
+            policy.WithMethods("GET", "HEAD", "POST").WithHeaders("Authorization", "Content-Type", "Range", "If-None-Match", "If-Range").WithExposedHeaders("ETag", "Content-Range", "Accept-Ranges", "Content-Length", "Location");
         }));
         var app = builder.Build();
         if (service.Config.CorsOrigins.Length > 0) app.UseCors();
+        app.Use(async (context, next) =>
+        {
+            var request = context.Request;
+            var protectedRequest = (!HttpMethods.IsGet(request.Method) && !HttpMethods.IsHead(request.Method) && !HttpMethods.IsOptions(request.Method))
+                || request.Path.StartsWithSegments("/tasks", StringComparison.OrdinalIgnoreCase)
+                || request.Path.StartsWithSegments("/storage", StringComparison.OrdinalIgnoreCase);
+            if (protectedRequest)
+            {
+                context.Response.Headers.CacheControl = "no-store";
+                if (keyHash == null)
+                {
+                    context.Response.StatusCode = 503;
+                    await context.Response.WriteAsJsonAsync(new { error = "Administrative API disabled: MOENOTES_API_KEY is not configured" });
+                    return;
+                }
+                var headers = request.Headers.Authorization;
+                var header = headers.Count == 1 ? headers[0] : null;
+                var valid = header != null && header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+                    && CryptographicOperations.FixedTimeEquals(keyHash, SHA256.HashData(Encoding.UTF8.GetBytes(header[7..])));
+                if (!valid)
+                {
+                    context.Response.StatusCode = 401;
+                    context.Response.Headers.WWWAuthenticate = "Bearer";
+                    await context.Response.WriteAsJsonAsync(new { error = "Invalid or missing API key" });
+                    return;
+                }
+            }
+            await next(context);
+        });
         app.Use(async (context, next) =>
         {
             try { await next(context); }

@@ -36,3 +36,5 @@ changes require explicit release notes; a frozen stable API is not claimed.
 - Validate five live TW language catalogs and small download/export samples.
 - Remove Rust source, tests, Cargo/toolchain files and obsolete dependency notices
   from the C# branch; retain notices for code adapted into the C# implementation.
+- Protect administrative HTTP routes with an environment-configured Bearer API
+  key; disable them when unconfigured and keep browsing/files public.

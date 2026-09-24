@@ -25,7 +25,7 @@ public class BundleApiTests
         IResult Download() { Interlocked.Increment(ref count); return Results.Bytes(fixture.Bundle); }
         await cdn.StartAsync(); var root = Address(cdn);
         var config = new Config { DataDir = dir.Path, Region = "tw", Locale = "en", AllowLoopbackHttp = true, CorsOrigins = [allowedOrigin], Regions = [new("tw", root + "/tw", "en", ["en", "ja"]), new("kr", root + "/kr", "en", ["en"])] };
-        var service = new AssetService(config); await using var app = Api.Build(service, "http://127.0.0.1:0"); await app.StartAsync(); using var http = new HttpClient { BaseAddress = new Uri(Address(app)) };
+        var service = new AssetService(config); await using var app = Api.Build(service, "http://127.0.0.1:0", apiKey: "integration-test-key"); await app.StartAsync(); using var http = new HttpClient { BaseAddress = new Uri(Address(app)) }; http.DefaultRequestHeaders.Authorization = new("Bearer", "integration-test-key");
         Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync("/")).StatusCode);
         async Task<string> Refresh(string region, string locale)
         {
