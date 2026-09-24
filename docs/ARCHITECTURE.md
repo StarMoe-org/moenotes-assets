@@ -29,8 +29,11 @@ trees; `class_data` can explicitly override it for other Unity revisions.
 `CriTables` reads bounded @UTF/AFS2 structures and resolves embedded cue waveform
 references. VGAudio decodes HCA after CRC and strict frame/key validation. USM
 chunks are demasked, checked for stream ambiguity/end markers, and passed through
-FFmpeg. Encoded outputs are probed, compared to their source tracks and fully
-decoded before publication. Filenames from source media are never followed.
+FFmpeg. VP9 is copied into MP4 when its IVF timing matches the USM header; other
+video is re-encoded to H.264. Encoded outputs are probed, compared to their source
+tracks and fully decoded before publication. Copied video packets are counted
+instead, because the source probe already decoded the same packets.
+Filenames from source media are never followed.
 The pinned VGAudio adapter binds its internal strict frame validator because its
 public decode path does not report every invalid frame; changing that dependency
 requires rerunning wrong-key and damaged-frame tests. NativeAOT/trimming is not a

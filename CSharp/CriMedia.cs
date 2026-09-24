@@ -114,41 +114,44 @@ public static class CriMedia
             var channels = DecodeHca(awb.AsSpan((int)start, (int)(end - start)).ToArray(), subkey, config, wav);
             var original = await Probe(config, wav, token); var destination = output.PathFor("m4a");
             await Ffmpeg(config, ["-i", wav, "-map_metadata", "-1", "-c:a", "aac", "-b:a", channels == 1 ? "96k" : "192k", "-movflags", "+faststart", destination], token);
-            var probe = await Validate(config, destination, [original], false, token);
+            var probe = await Validate(config, destination, [original], null, false, token);
             output.Add(destination, labels[0].Name, "audio/mp4", new { cues = labels.Distinct().ToArray(), probe }); File.Delete(wav);
         }
     }
-    public static async Task<JsonObject> Probe(Config config, string path, CancellationToken token)
+    public static async Task<JsonObject> Probe(Config config, string path, CancellationToken token, bool packets = false)
     {
-        var text = await Processes.Run(config.Ffprobe, ["-v", "error", "-count_frames", "-show_streams", "-show_format", "-of", "json", path], token);
+        var text = await Processes.Run(config.Ffprobe, ["-v", "error", packets ? "-count_packets" : "-count_frames", "-show_streams", "-show_format", "-of", "json", path], token);
         var result = JsonNode.Parse(text)!.AsObject(); result["format"]?.AsObject().Remove("filename"); return result;
     }
     private static Task<string> Ffmpeg(Config config, IEnumerable<string> args, CancellationToken token) =>
         Processes.Run(config.Ffmpeg, new[] { "-nostdin", "-hide_banner", "-v", "error", "-xerror", "-y", "-threads", config.FfmpegThreads.ToString(CultureInfo.InvariantCulture) }.Concat(args), token);
-    private static async Task<JsonObject> Validate(Config config, string path, JsonObject[] originals, bool video, CancellationToken token)
+    private static double FrameRate(JsonNode stream) { var parts = ((string?)stream["r_frame_rate"] ?? "0/1").Split('/'); return double.Parse(parts[0], CultureInfo.InvariantCulture) / double.Parse(parts[1], CultureInfo.InvariantCulture); }
+    // A copied video stream holds the source packets, which were fully decoded while probing the source.
+    private static async Task<JsonObject> Validate(Config config, string path, JsonObject[] originals, string? videoCodec, bool copied, CancellationToken token)
     {
         Require(new FileInfo(path).Length <= config.OutputBytes, "Output media budget");
-        var probe = await Probe(config, path, token); var streams = probe["streams"]!.AsArray();
-        Require(streams.Count == originals.Length && streams.Count(s => (string?)s?["codec_type"] == "video") == (video ? 1 : 0), "Output track count mismatch");
+        var probe = await Probe(config, path, token, copied); var streams = probe["streams"]!.AsArray();
+        Require(streams.Count == originals.Length && streams.Count(s => (string?)s?["codec_type"] == "video") == (videoCodec != null ? 1 : 0), "Output track count mismatch");
         foreach (var original in originals)
         {
             var sourceStreams = original["streams"]!.AsArray(); Require(sourceStreams.Count == 1, "Ambiguous source tracks"); var src = sourceStreams[0]!;
             var kind = (string?)src["codec_type"]; var dst = streams.SingleOrDefault(s => (string?)s?["codec_type"] == kind); Require(dst != null, "Output track missing");
-            Require((string?)dst!["codec_name"] == (kind == "video" ? "h264" : "aac"), "Output codec mismatch");
+            Require((string?)dst!["codec_name"] == (kind == "video" ? videoCodec : "aac"), "Output codec mismatch");
             double? Duration(JsonNode s, JsonNode p) => double.TryParse((string?)(s["duration"] ?? p["format"]?["duration"]), CultureInfo.InvariantCulture, out var duration) && double.IsFinite(duration) ? duration : null;
             var sourceDuration = Duration(src, original); var outputDuration = Duration(dst, probe);
             if (sourceDuration is { } duration) Require(outputDuration != null && Math.Abs(outputDuration.Value - duration) <= Math.Max(0.2, duration * 0.02), "Output media truncated");
             if (kind == "video")
             {
-                Require(long.TryParse((string?)src["nb_read_frames"], out var frames) && frames > 0 && long.TryParse((string?)dst["nb_read_frames"], out var outputFrames) && frames == outputFrames, "Video frame count mismatch");
-                double Rate(JsonNode node) { var parts = ((string?)node["r_frame_rate"] ?? "0/1").Split('/'); return double.Parse(parts[0], CultureInfo.InvariantCulture) / double.Parse(parts[1], CultureInfo.InvariantCulture); }
-                Require(double.IsFinite(Rate(src)) && Math.Abs(Rate(src) - Rate(dst)) < 0.001, "Video frame rate changed");
+                Require(long.TryParse((string?)src["nb_read_frames"], out var frames) && frames > 0 && long.TryParse((string?)dst[copied ? "nb_read_packets" : "nb_read_frames"], out var outputFrames) && frames == outputFrames, "Video frame count mismatch");
+                Require(double.IsFinite(FrameRate(src)) && Math.Abs(FrameRate(src) - FrameRate(dst)) < 0.001, "Video frame rate changed");
             }
             else Require(sourceDuration != null, "Missing audio duration");
             if (kind == "audio") Require((int?)dst["channels"] == (int?)src["channels"] && (string?)dst["sample_rate"] == (string?)src["sample_rate"], "Audio format changed");
-            else Require((int?)dst["width"] == (((int)src["width"]! + 1) / 2 * 2) && (int?)dst["height"] == (((int)src["height"]! + 1) / 2 * 2), "Video dimensions changed");
+            else Require((int?)dst["width"] == (copied ? (int)src["width"]! : ((int)src["width"]! + 1) / 2 * 2) && (int?)dst["height"] == (copied ? (int)src["height"]! : ((int)src["height"]! + 1) / 2 * 2), "Video dimensions changed");
         }
-        await Ffmpeg(config, ["-i", path, "-map", "0", "-f", "null", "-"], token); return probe;
+        if (!copied) await Ffmpeg(config, ["-i", path, "-map", "0", "-f", "null", "-"], token);
+        else if (originals.Length > 1) await Ffmpeg(config, ["-i", path, "-map", "0:a", "-f", "null", "-"], token);
+        return probe;
     }
     private static async Task Movie(string path, Worker.Output output, CancellationToken token)
     {
@@ -158,17 +161,22 @@ public static class CriMedia
         var original = await Probe(config, video, token); var originals = new List<JsonObject> { original };
         var args = new List<string>();
         var source = original["streams"]![0]!;
+        // Browsers play VP9 directly, so copying it avoids a lossy CPU-bound H.264 encode.
+        var copy = (string?)source["codec_name"] == "vp9";
         if (demuxed.Frames is { } frames)
             Require(long.TryParse((string?)source["nb_read_frames"], out var decoded) && decoded == frames, "USM source frame count mismatch");
         if (demuxed.RateNumerator is { } numerator && demuxed.RateDenominator is { } denominator)
         {
             var rate = $"{numerator}/{denominator}";
             Require(long.TryParse((string?)source["nb_read_frames"], out var count) && count > 0, "Missing source frame count");
+            // FFmpeg keeps container timestamps when copying and ignores -r, so only copy
+            // when the IVF timing already matches the USM header; otherwise re-encode.
+            copy &= Math.Abs(FrameRate(source) - (double)numerator / denominator) < 0.001;
             // Raw MPEG duration/r_frame_rate can be bitrate/field-rate estimates.
             // The USM stream header is authoritative for presentation timing.
             source["r_frame_rate"] = rate;
             source["duration"] = (count * (double)denominator / numerator).ToString("R", CultureInfo.InvariantCulture);
-            args.AddRange(["-r", rate]);
+            if (!copy) args.AddRange(["-r", rate]);
         }
         args.AddRange(["-i", video]);
         if (audio != null)
@@ -179,8 +187,10 @@ public static class CriMedia
         }
         else args.AddRange(["-map", "0:v:0"]);
         var destination = output.PathFor("mp4");
-        args.AddRange(["-map_metadata", "-1", "-c:v", "libx264", "-threads", config.FfmpegThreads.ToString(CultureInfo.InvariantCulture), "-crf", "20", "-preset", "medium", "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-pix_fmt", "yuv420p", "-movflags", "+faststart", destination]);
-        await Ffmpeg(config, args, token); var probe = await Validate(config, destination, originals.ToArray(), true, token);
+        args.AddRange(["-map_metadata", "-1"]);
+        args.AddRange(copy ? ["-c:v", "copy"] : ["-c:v", "libx264", "-threads", config.FfmpegThreads.ToString(CultureInfo.InvariantCulture), "-crf", "20", "-preset", "medium", "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-pix_fmt", "yuv420p"]);
+        args.AddRange(["-movflags", "+faststart", destination]);
+        await Ffmpeg(config, args, token); var probe = await Validate(config, destination, originals.ToArray(), copy ? "vp9" : "h264", copy, token);
         output.Add(destination, output.Job.Target.Key, "video/mp4", probe);
     }
 }

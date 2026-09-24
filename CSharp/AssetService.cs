@@ -203,7 +203,7 @@ public sealed partial class AssetService : IAsyncDisposable
                         if (skip != null) item = new(key, null, null, skip);
                         else
                         {
-                            var id = Crypto.Identity(snapshot.Id, key, Worker.Profile);
+                            var id = Crypto.Identity(snapshot.Id, key, Worker.ProfileFor(catalog.Target(key)));
                             var manifest = Store.Get<Manifest>("export", id);
                             if (manifest == null)
                             {
@@ -294,7 +294,7 @@ public sealed partial class AssetService : IAsyncDisposable
         try
         {
             var existing = Store.Get<Manifest>("export", id); if (existing != null) return existing;
-            var target = catalog.Target(key); var locations = ExportSelection.Dependencies(catalog, key);
+            var target = catalog.Target(key); var profile = Worker.ProfileFor(target); var locations = ExportSelection.Dependencies(catalog, key);
             if (target.Provider == Catalog.Cri || target.ResourceType.StartsWith("CriWare.", StringComparison.Ordinal))
             {
                 var raw = locations.Where(l => l.Provider == Catalog.Cri).ToArray();
@@ -309,7 +309,7 @@ public sealed partial class AssetService : IAsyncDisposable
                 leases.Add(await downloadWork.Join(snapshot.Id + ":" + location.Id, ct => DownloadOne(snapshot, location, ct), token));
             var selectedConfig = Config.ForSnapshot(snapshot);
             var cri = locations.Length == 1 && locations[0].Provider == Catalog.Cri;
-            var conversionId = Crypto.Identity(Worker.Profile, cri ? "cri" : target.Internal, cri ? "cri" : target.ResourceType,
+            var conversionId = Crypto.Identity(profile, cri ? "cri" : target.Internal, cri ? "cri" : target.ResourceType,
                 selectedConfig.CriKey.ToString(System.Globalization.CultureInfo.InvariantCulture), classDataIdentity,
                 string.Join(',', leases.Select(l => l.Value.PlainHash).Order(StringComparer.Ordinal)));
             lock (publicationGates)
@@ -325,7 +325,7 @@ public sealed partial class AssetService : IAsyncDisposable
             {
                 Require(previous.Files.Sum(f => f.Bytes) <= Config.OutputBytes, "Reused output size budget");
                 var copied = previous.Files.Select(f => f with { Id = Crypto.Identity(id, f.Name), Label = f.MediaType == "video/mp4" ? target.Key : f.Label }).ToArray();
-                var reused = new Manifest(id, snapshot.Id, key, Worker.Profile, leases.Select(l => new Source(l.Value.Input.Location, l.Value.Hash, l.Value.PlainHash)).ToArray(), copied, snapshot.Region, previous.Id);
+                var reused = new Manifest(id, snapshot.Id, key, profile, leases.Select(l => new Source(l.Value.Input.Location, l.Value.Hash, l.Value.PlainHash)).ToArray(), copied, snapshot.Region, previous.Id);
                 stage = Path.Combine(Config.DataDir, "tmp", "reuse-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(stage);
                 await File.WriteAllTextAsync(Path.Combine(stage, "manifest.json"), Json.Write(reused), token);
                 token.ThrowIfCancellationRequested(); Directory.Move(stage, destination); moved = true;
@@ -360,7 +360,7 @@ public sealed partial class AssetService : IAsyncDisposable
                 Require(Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, token)) == file.Sha256, "Output hash mismatch");
             }
             var published = files.Select(f => new PublishedFile(Crypto.Identity(id, f.Name), f.Name, f.Label, f.MediaType, f.Bytes, f.Sha256, f.Metadata)).ToArray();
-            var manifest = new Manifest(id, snapshot.Id, key, Worker.Profile, leases.Select(l => new Source(l.Value.Input.Location, l.Value.Hash, l.Value.PlainHash)).ToArray(), published, snapshot.Region);
+            var manifest = new Manifest(id, snapshot.Id, key, profile, leases.Select(l => new Source(l.Value.Input.Location, l.Value.Hash, l.Value.PlainHash)).ToArray(), published, snapshot.Region);
             foreach (var file in files) Blobs.Publish(Path.Combine(output, file.Name), file.Sha256, file.Bytes);
             await File.WriteAllTextAsync(Path.Combine(output, "manifest.json"), Json.Write(manifest), token);
             token.ThrowIfCancellationRequested(); Directory.Move(output, destination); moved = true;

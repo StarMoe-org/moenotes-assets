@@ -61,12 +61,11 @@ public static class Usm
         Require(video.Length > 0 && channels.SetEquals(ended), "USM stream missing end marker");
         Require(!channels.Any(c => c.Item1 == "@SFA") || audio.Length > 0, "USM audio missing");
         video.Flush(); audio.Flush(); video.Dispose(); audio.Dispose();
-        using (var check = File.OpenRead(videoPath))
-        {
-            var magic = new byte[4]; check.ReadExactly(magic);
-            if (magic.AsSpan().SequenceEqual("DKIF"u8)) { var renamed = Path.Combine(stage, "video.ivf"); File.Move(videoPath, renamed); videoPath = renamed; }
-            else Require(videoCodec is null or 1 or 0, "Unsupported USM video codec");
-        }
+        // Windows cannot rename a file that is still open.
+        var magic = new byte[4];
+        using (var check = File.OpenRead(videoPath)) check.ReadExactly(magic);
+        if (magic.AsSpan().SequenceEqual("DKIF"u8)) { var renamed = Path.Combine(stage, "video.ivf"); File.Move(videoPath, renamed); videoPath = renamed; }
+        else Require(videoCodec is null or 1 or 0, "Unsupported USM video codec");
         if (new FileInfo(audioPath).Length == 0) return new(videoPath, null, frames, rateNumerator, rateDenominator);
         if (audioCodec == 2) { var renamed = Path.Combine(stage, "audio.adx"); File.Move(audioPath, renamed); audioPath = renamed; }
         return new(videoPath, audioPath, frames, rateNumerator, rateDenominator);

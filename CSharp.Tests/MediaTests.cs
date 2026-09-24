@@ -40,4 +40,20 @@ public class MediaTests
             Assert.Contains("source frame count mismatch", exception.Message);
         }
     }
+    [Theory]
+    [InlineData(25, false)]
+    [InlineData(50, true)]
+    public async Task UsmVp9IsCopiedUnlessHeaderTimingDiffers(int headerRate, bool reencoded)
+    {
+        using var dir = new TempDirectory(); var config = new Config { CdnRoot = "https://cdn.invalid" }; var raw = Path.Combine(dir.Path, "source.ivf");
+        await Processes.Run(config.Ffmpeg, ["-nostdin", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=63x47:rate=25", "-t", "0.4", "-pix_fmt", "yuv420p", "-c:v", "libvpx-vp9", "-f", "ivf", raw], CancellationToken.None);
+        var path = Path.Combine(dir.Path, "movie.usm"); File.WriteAllBytes(path, CriFixture.Usm(File.ReadAllBytes(raw), config.CriKey, 10, headerRate, 9));
+        var job = Job(config, path, Path.Combine(dir.Path, "out"), "CriWare.Assets.CriManaUsmAsset");
+        var result = await Processes.Worker(job, dir.Path, CancellationToken.None); Assert.Single(result); Assert.Equal("video/mp4", result[0].MediaType);
+        var stream = (await CriMedia.Probe(config, Path.Combine(job.Output, result[0].Name), CancellationToken.None))["streams"]![0]!;
+        Assert.Equal(reencoded ? "h264" : "vp9", (string?)stream["codec_name"]);
+        Assert.Equal($"{headerRate}/1", (string?)stream["r_frame_rate"]);
+        Assert.Equal(reencoded ? 64 : 63, (int?)stream["width"]);
+        Assert.Equal("10", (string?)stream["nb_read_frames"]);
+    }
 }

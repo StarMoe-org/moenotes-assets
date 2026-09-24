@@ -54,3 +54,7 @@ changes require explicit release notes; a frozen stable API is not claimed.
   each complete export's dependencies and workspace before downloading, wait for
   capacity, and retain the reservation until shared source cleanup completes.
 - Do not count cancellation during deployment as a per-resource export failure.
+- Copy USM VP9 video into MP4 instead of re-encoding it to H.264 when IVF timing
+  matches the USM header; MPEG and mismatched-timing sources are still re-encoded.
+  Video has its own profile, so previously exported images/text/audio stay reusable.
+- Close the demuxed USM video before renaming it to `.ivf`, which failed on Windows.

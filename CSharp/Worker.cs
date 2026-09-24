@@ -13,6 +13,9 @@ public static class Worker
 {
     // The C# implementation has its own identity: codec/library changes can change output bytes.
     public const string Profile = "csharp-json-png-webp-aac-h264-v3";
+    // Movies have their own identity so a video codec change leaves image/text/audio exports reusable.
+    public const string MovieProfile = "csharp-usm-mp4-vp9copy-h264-aac-v1";
+    public static string ProfileFor(Location target) => target.ResourceType == "CriWare.Assets.CriManaUsmAsset" ? MovieProfile : Profile;
     public sealed class Output(WorkerJob job)
     {
         public WorkerJob Job { get; } = job;

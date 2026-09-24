@@ -162,7 +162,9 @@ Sources include `location`, `download_sha256`, `plain_sha256`. Files include
 source names; names are generated. Metadata includes image/cue/media information.
 Separate snapshot manifests can point to the same content-addressed file bytes.
 Each request has its own task; identical snapshot/key/profile exports are reused.
-Profile: `csharp-json-png-webp-aac-h264-v3`.
+Profile: `csharp-json-png-webp-aac-h264-v3`; USM video uses its own profile,
+`csharp-usm-mp4-vp9copy-h264-aac-v1`, so video codec changes leave other exports
+reusable. Video files remain `video/mp4`; VP9 sources are copied, others are H.264.
 
 Missing records return 404; exhausted queue 429; invalid requests 400. Body limit
 is 2 MiB. Files support 206/304/416; mismatched If-Range sends the full file.

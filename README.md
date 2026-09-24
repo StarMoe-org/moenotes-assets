@@ -2,7 +2,7 @@
 
 C# / .NET 10 service and CLI for retrieving and exporting Our Notes Android assets.
 It parses Addressables binary-v2 catalogs, downloads and decrypts dependencies,
-and exports TextAsset content, PNG/WebP image pairs, AAC audio and H.264 video.
+and exports TextAsset content, PNG/WebP image pairs, AAC audio and VP9/H.264 MP4 video.
 
 This is an independent interoperability project. No game login, player credentials,
 Unity Editor, Python, Rust runtime or proprietary CRI plugin is required.
@@ -73,16 +73,18 @@ See [API](docs/API.md) for selection, cancellation, manifests and file ranges.
 | TextAsset (including gzip) | JSON, SUS, UTF-8 text, or binary payload |
 | Texture2D, Sprite, populated SpriteAtlas | PNG + lossless WebP; sprite rectangle/rotation, triangle mask and split alpha |
 | ACB with embedded HCA | AAC-LC M4A with cue-name metadata in its manifest |
-| Supported USM MPEG-2 / IVF video with optional ADX/HCA | H.264/AAC MP4 |
+| Supported USM MPEG-2 / IVF video with optional ADX/HCA | VP9 (copied) or H.264, with AAC, in MP4 |
 
 Asset paths are resolved exactly through bundle containers. Original names are
 labels, never output filesystem paths. Known unsupported types and ambiguous
 labels are recorded as skipped before download; decoder/data errors still fail.
 Raw resource containers are not advertised as successful exports.
 
-Audio uses 96 kbps mono / 192 kbps stereo AAC without normalization. Video uses
-libx264 CRF 20, medium, yuv420p and faststart; odd dimensions are padded to even.
-Every output media file is probed and fully decoded before publication. Video
+Audio uses 96 kbps mono / 192 kbps stereo AAC without normalization. VP9 video is
+copied without re-encoding when its IVF timing matches the USM header. Other video
+uses libx264 CRF 20, medium, yuv420p and faststart; odd dimensions are padded to even.
+Every output media file is probed and fully decoded before publication, except that
+copied VP9 packets are counted because the source probe already decoded them. Video
 frame counts/rates are checked, and available source durations are compared.
 
 Not supported: arbitrary Unity versions/classes, models/scenes/animation, external
