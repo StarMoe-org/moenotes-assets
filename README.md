@@ -1,0 +1,156 @@
+# moenotes-assets
+
+A Rust HTTP service for retrieving and exporting Our Notes assets. It reads an
+Android Addressables catalog, downloads the selected dependencies, decrypts
+supported resources, and publishes usable files on local disk.
+
+Version **0.1.0-alpha.1**. This is an independent interoperability project, not an
+official game service. The HTTP v1 and Rust interfaces are experimental.
+
+## Supported Resources
+
+| Input | Output |
+|---|---|
+| TextAsset, including gzip content | Original JSON, SUS, UTF-8 text, or binary payload |
+| Texture2D, Sprite, populated SpriteAtlas | PNG |
+| ACB with embedded HCA waveforms | AAC-LC in M4A, with cue-name metadata |
+| Supported USM video | H.264/AAC MP4 |
+
+Unity parsing uses `unity-rs-core 0.5.1`; CRI parsing uses `cridecoder 0.3.5`.
+FFmpeg runs as a separate process. **No Python, C#, Unity Editor, proprietary CRI
+plugin, game login, or player credentials are required at runtime.**
+
+Exports are asynchronous. Single-resource results publish atomically; batches
+may partially succeed. Concurrent requests share work, completed exports are
+reused, and GET requests never start downloads. Raw downloads and intermediate
+files are temporary, not a permanent asset cache. Catalog snapshots and old
+exported versions remain available after a refresh.
+
+Not supported: arbitrary game versions/platforms, external streaming AWB banks,
+CPK, scene/model/animation exports, complex cue playback, song-segment assembly,
+multichannel audio, alpha video, and ambiguous multi-track video. Missing local
+APK dependencies produce explicit failures; the service does not guess URLs for
+embedded resources. Asset availability and rights remain the publisher's concern.
+
+## Install
+
+Requirements: Linux, Rust 1.98.1, a C compiler/pkg-config for native dependencies,
+FFmpeg/ffprobe with AAC and libx264, and `prlimit` from util-linux.
+
+```sh
+cargo build --release --locked
+cp config.example.toml config.toml
+# Set cdn_root to the authorized CDN root for your selected region.
+./target/release/moenotes-assets serve config.toml
+```
+
+The default listener is `127.0.0.1:8091`. Configuration is loaded once at startup.
+Region, locale, and Bili resource version are explicit. This service does not
+discover servers or authenticate to the game API.
+
+**There is no HTTP authentication.** All callers can submit costly downloads and
+transcodes. Keep the service on a trusted network, or place an authenticated,
+rate-limited reverse proxy in front of it. Do not expose it directly to the Internet.
+
+## First Export
+
+Refresh the catalog and poll the returned task until it succeeds:
+
+```sh
+curl -X POST http://127.0.0.1:8091/v1/catalogs/refresh
+curl http://127.0.0.1:8091/v1/tasks/TASK_ID
+curl 'http://127.0.0.1:8091/v1/assets?prefix=Live%2FMusicScore%2F&limit=20'
+```
+
+Submit an exact logical key, or use `prefix` instead of `keys` for a batch:
+
+```sh
+curl -X POST http://127.0.0.1:8091/v1/exports \
+  -H 'Content-Type: application/json' \
+  -d '{"keys":["Live/MusicScore/0007/0007_03"]}'
+curl http://127.0.0.1:8091/v1/tasks/TASK_ID
+curl http://127.0.0.1:8091/v1/exports/EXPORT_ID
+curl http://127.0.0.1:8091/v1/files/FILE_ID -o chart.json
+```
+
+A task fixes its catalog snapshot at creation. Successful result entries contain
+an `export_id`; its manifest lists file IDs, labels, MIME types, sizes, and SHA256
+digests. File URLs support Range, HEAD, and ETag. Original asset names are labels,
+not trusted filesystem paths.
+
+## Storage and Limits
+
+The configured `data_dir` contains SQLite, retained catalog snapshots, immutable
+export directories, and temporary job directories. Only one service may own it.
+Keep the volume private to the service user. Do not edit files under a running
+service or delete directories directly while the index still references them.
+
+Defaults target a multicore machine with at least 8 GiB RAM: 8 downloads, 2 Rust
+workers, 1 concurrent video, and 4 FFmpeg threads. Queue capacity is 128 active
+tasks, with at most 50,000 selected keys per task. Input, expansion, output,
+temporary-disk, worker address-space, CPU and wall-time limits are configurable.
+Temporary space uses conservative reservations; a busy service may reject work
+before the filesystem is full. Configure a filesystem quota/container memory
+limit as an additional system boundary. Disk-full errors are reported, not retried
+indefinitely. Final exports have no automatic eviction.
+
+Downloads are streamed and decrypted into temporary files. Small files may be
+loaded into memory by the Unity worker; large files retain file-backed sources.
+This is not a promise of zero-copy parsing or unpacking before a download ends.
+Cancellation terminates worker process groups. Shared work continues while
+another caller still needs it. Restart clears temporary files and marks unfinished
+tasks failed; resubmit their keys to retry. Partial HTTP-byte-range download resume
+is not implemented.
+
+Audio uses 96 kbps mono / 192 kbps stereo AAC without normalization. Video uses
+H.264 CRF 20, medium, yuv420p and faststart, preserving frame rate and dimensions
+except padding odd dimensions to even. Video without audio stays silent. Output
+media is probed and fully decoded before publication; codec versions may affect
+compressed bytes, so SHA256 identifies actual output rather than a universal
+cross-version encoding result.
+
+## Container
+
+```sh
+docker build -t moenotes-assets:local .
+docker volume create moenotes-assets-data
+docker run --rm -p 127.0.0.1:8091:8091 \
+  -v moenotes-assets-data:/data \
+  -v "$PWD/config.toml:/etc/moenotes-assets/config.toml:ro" \
+  moenotes-assets:local
+```
+
+For the container set `listen = "0.0.0.0:8091"` and `data_dir = "/data"`.
+It runs as UID/GID 65532; bind mounts must be writable by that user. The Dockerfile
+uses BuildKit Cargo registry and target caches. `/healthz` reports liveness;
+`/readyz` checks the index and writable storage. Media encoders are checked at startup.
+
+This image is intended for local validation. Review FFmpeg/libx264 redistribution
+requirements before publishing it; see [Third-Party Notices](THIRD_PARTY_NOTICES.md).
+
+## API and Development
+
+See [HTTP API](docs/API.md), [architecture](docs/ARCHITECTURE.md), and
+[changelog](CHANGELOG.md). Internal worker JSON is not a public integration API.
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --locked
+cargo doc --no-deps --locked
+```
+
+Tests use synthetic files and loopback HTTP, not publisher endpoints. Private
+real-resource acceptance data is intentionally excluded from the repository.
+Only documented inputs are supported; unsupported data is not reported as a
+successful raw-container export.
+
+GitHub Actions runs format, lint, tests, documentation and Release builds with
+Cargo caching. CI does not publish binaries, images or game resources.
+See [Security Policy](SECURITY.md) for deployment boundaries and private reporting.
+
+## License
+
+Project code: [MIT](LICENSE). Dependencies have their own licenses. The container
+includes GPL-enabled FFmpeg and is not MIT-only. No license here grants rights
+to game resources, trademarks, or redistributed exports.

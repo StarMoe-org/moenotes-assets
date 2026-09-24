@@ -1,0 +1,13 @@
+*
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!src/**
+!LICENSE
+!THIRD_PARTY_NOTICES.md
+!third_party/**
+!target/
+target/*
+!target/release/
+target/release/*
+!target/release/moenotes-assets

@@ -1,0 +1,28 @@
+# No authentication is implemented. Use a private network or an authenticated proxy.
+listen = "127.0.0.1:8091"
+data_dir = "data"
+region = "hk"
+cdn_root = "https://cdn.example.invalid/prod/your-region"
+locale = "zh-Hant"
+bili_version = "main"
+downloads = 8
+workers = 2
+videos = 1
+ffmpeg_threads = 4
+queue_limit = 128
+max_keys = 50000
+temp_bytes = 21474836480
+input_bytes = 1073741824
+output_bytes = 2147483648
+expanded_bytes = 2147483648
+memory_threshold = 33554432
+worker_memory_bytes = 3221225472
+worker_timeout_secs = 900
+download_timeout_secs = 120
+ffmpeg = "ffmpeg"
+ffprobe = "ffprobe"
+
+# This is an asset-format key, not a player credential. Override for other builds.
+cri_key = 8594927479
+# Test fixtures only. HTTPS remains required for non-loopback hosts.
+allow_loopback_http = false

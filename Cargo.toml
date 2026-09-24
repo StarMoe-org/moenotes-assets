@@ -1,0 +1,49 @@
+[package]
+name = "moenotes-assets"
+version = "0.1.0-alpha.1"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+description = "Asynchronous Our Notes asset retrieval and export service"
+repository = "https://github.com/luoxiadesu/moenotes-assets"
+readme = "README.md"
+publish = false
+
+[dependencies]
+anyhow = "1"
+aes = "0.8"
+ctr = "0.9"
+sha2 = "0.10"
+hex = "0.4"
+crc32fast = "1"
+flate2 = "1"
+lz4_flex = "0.11"
+lzma-rs = "0.3"
+unity-rs-core = "=0.5.1"
+cridecoder = { version = "=0.3.5", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+url = { version = "2", features = ["serde"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt", "io"] }
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+axum = "0.8"
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["fs", "limit"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
+uuid = { version = "1", features = ["v4"] }
+tempfile = "3"
+fs2 = "0.4"
+nix = { version = "0.30", features = ["signal", "process"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+[profile.release]
+lto = "thin"
+strip = true
