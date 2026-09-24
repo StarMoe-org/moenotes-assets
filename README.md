@@ -73,6 +73,7 @@ See [API](docs/API.md) for selection, cancellation, manifests and file ranges.
 | TextAsset (including gzip) | JSON, SUS, UTF-8 text, or binary payload |
 | Texture2D, Sprite, populated SpriteAtlas | PNG + lossless WebP; sprite rectangle/rotation, triangle mask and split alpha |
 | ACB with embedded HCA | AAC-LC M4A with cue-name metadata in its manifest |
+| Full song (`Fwk.Sound.SplitAcbData`: XOR-masked ACB split across TextAssets) | Same as ACB |
 | Supported USM MPEG-2 / IVF video with optional ADX/HCA | VP9 (copied) or H.264, with AAC, in MP4 |
 
 Asset paths are resolved exactly through bundle containers. Original names are

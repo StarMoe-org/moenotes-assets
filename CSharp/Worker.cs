@@ -1,6 +1,7 @@
 using AssetsTools.NET;
 using AssetsTools.NET.Extra;
 using AssetsTools.NET.Texture;
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -16,6 +17,8 @@ public static class Worker
     // Movies have their own identity so a video codec change leaves image/text/audio exports reusable.
     public const string MovieProfile = "csharp-usm-mp4-vp9copy-h264-aac-v2";
     public static string ProfileFor(Location target) => target.ResourceType == "CriWare.Assets.CriManaUsmAsset" ? MovieProfile : Profile;
+    // Full songs: a MonoBehaviour listing TextAsset chunks that together form one ACB.
+    public const string SplitAcbType = "Fwk.Sound.SplitAcbData";
     public sealed class Output(WorkerJob job)
     {
         public WorkerJob Job { get; } = job;
@@ -152,12 +155,8 @@ public static class Worker
         switch ((AssetClassID)asset.info.TypeId)
         {
             case AssetClassID.TextAsset:
-                // Read bytes directly because a TextAsset's m_Script may contain binary or gzip data.
-                var reader = asset.file.file.Reader; reader.Position = asset.info.GetAbsoluteByteOffset(asset.file.file);
-                label = reader.ReadCountStringInt32(); reader.Align();
-                var length = reader.ReadInt32();
-                Require(length >= 0 && reader.Position + length <= asset.info.GetAbsoluteByteOffset(asset.file.file) + asset.info.ByteSize && length <= Math.Min(output.Job.Config.ExpandedBytes, 64L << 20), "Text expansion limit");
-                var data = BinaryTools.DecodeText(reader.ReadBytes(length), Math.Min(output.Job.Config.ExpandedBytes, 64L << 20));
+                (label, var raw) = TextAssetBytes(asset, Math.Min(output.Job.Config.ExpandedBytes, 64L << 20));
+                var data = BinaryTools.DecodeText(raw, Math.Min(output.Job.Config.ExpandedBytes, 64L << 20));
                 string ext = "bin", mime = "application/octet-stream";
                 try { using var document = JsonDocument.Parse(data); ext = "json"; mime = "application/json"; }
                 catch (JsonException)
@@ -177,8 +176,48 @@ public static class Worker
                 var bytes = EmbeddedCriBytes(field!, output.Job.Config.InputBytes);
                 var embedded = Path.Combine(Path.GetDirectoryName(output.Job.Output)!, $"embedded-cri-{output.EmbeddedMedia.Count}.bin");
                 File.WriteAllBytes(embedded, bytes); output.EmbeddedMedia.Add(embedded); break;
+            case AssetClassID.MonoBehaviour when output.Job.Target.ResourceType == SplitAcbType:
+                var chunks = field!["_chunks"]["Array"].Children.Select(pointer =>
+                {
+                    var chunk = Resolve(manager, asset.file, pointer);
+                    Require(chunk.info.TypeId == (int)AssetClassID.TextAsset, "Split ACB chunk is not a TextAsset");
+                    return TextAssetBytes(chunk, output.Job.Config.InputBytes).Bytes;
+                });
+                var acb = JoinSplitAcb(chunks, output.Job.Config.InputBytes);
+                var joined = Path.Combine(Path.GetDirectoryName(output.Job.Output)!, $"embedded-cri-{output.EmbeddedMedia.Count}.bin");
+                File.WriteAllBytes(joined, acb); output.EmbeddedMedia.Add(joined); break;
             default: throw new InvalidDataException($"Unsupported Unity class {asset.info.TypeId}");
         }
+    }
+    // Read bytes directly because a TextAsset's m_Script may contain binary or gzip data.
+    private static (string Name, byte[] Bytes) TextAssetBytes(AssetExternal asset, long limit)
+    {
+        var reader = asset.file.file.Reader; var start = asset.info.GetAbsoluteByteOffset(asset.file.file); reader.Position = start;
+        var name = reader.ReadCountStringInt32(); reader.Align();
+        var length = reader.ReadInt32();
+        Require(length >= 0 && reader.Position + length <= start + asset.info.ByteSize && length <= limit, "Text expansion limit");
+        return (name, reader.ReadBytes(length));
+    }
+    /// <summary>
+    /// Matches the game's SplitAcbLoader: chunks concatenated in serialized order, every byte XORed
+    /// with 0x5A (an asset-format obfuscation, like cri_key). The result must hold one @UTF table.
+    /// </summary>
+    public static byte[] JoinSplitAcb(IEnumerable<byte[]> chunks, long limit)
+    {
+        const byte obfuscation = 0x5A;
+        using var joined = new MemoryStream(); var count = 0;
+        foreach (var chunk in chunks)
+        {
+            Require(chunk.Length > 0, "Empty split ACB chunk");
+            Require(++count <= 10000 && joined.Length + chunk.LongLength <= limit, "Split ACB input budget");
+            joined.Write(chunk);
+        }
+        var bytes = joined.ToArray();
+        for (var i = 0; i < bytes.Length; i++) bytes[i] ^= obfuscation;
+        Require(bytes.Length >= 32 && bytes.AsSpan().StartsWith("@UTF"u8), "Split ACB chunks do not form an ACB");
+        var table = BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(4)) + 8L;
+        Require(table >= 32 && table <= bytes.Length, "Split ACB table truncated");
+        return bytes;
     }
     public static byte[] EmbeddedCriBytes(AssetTypeValueField field, long limit)
     {

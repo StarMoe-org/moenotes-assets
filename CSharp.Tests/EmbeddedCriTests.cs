@@ -23,6 +23,26 @@ public class EmbeddedCriTests
         Assert.Throws<InvalidDataException>(() => Worker.EmbeddedCriBytes(field, 100));
     }
     [Fact]
+    public void JoinsSplitAcbChunksInOrderAndRemovesTheXorMask()
+    {
+        var acb = new byte[32]; "@UTF"u8.CopyTo(acb); acb[7] = 24;
+        var masked = acb.Select(b => (byte)(b ^ 0x5A)).ToArray();
+        Assert.Equal(acb, Worker.JoinSplitAcb([masked[..3], masked[3..]], 32));
+        Assert.Throws<InvalidDataException>(() => Worker.JoinSplitAcb([masked[3..], masked[..3]], 32));
+        Assert.Throws<InvalidDataException>(() => Worker.JoinSplitAcb([masked[..3], masked[3..]], 31));
+        Assert.Throws<InvalidDataException>(() => Worker.JoinSplitAcb([masked, []], 64));
+        Assert.Throws<InvalidDataException>(() => Worker.JoinSplitAcb([], 64));
+        Assert.Throws<InvalidDataException>(() => Worker.JoinSplitAcb([masked[..31]], 64));
+        Assert.Throws<InvalidDataException>(() => Worker.JoinSplitAcb([acb], 64));
+    }
+    [Fact]
+    public void SplitSongDataIsAnExportableType()
+    {
+        var target = new Location(1, "Cri/Sound/A_Song", "Assets/AddressableResources/Cri/Sound/MusicScore/A_Song.asset", "UnityEngine.ResourceManagement.ResourceProviders.BundledAssetProvider", Worker.SplitAcbType, [], null);
+        Assert.True(ExportSelection.Supported(target));
+        Assert.Equal(Worker.Profile, Worker.ProfileFor(target));
+    }
+    [Fact]
     public async Task ParentTerminatesOverBudgetWorkerWithoutSelfKillError()
     {
         using var dir = new TempDirectory(); var serialized = Fixture.Serialized(); var bundle = Fixture.Bundle(serialized);

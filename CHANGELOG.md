@@ -67,3 +67,7 @@ changes require explicit release notes; a frozen stable API is not claimed.
 - Fix intermittent Windows test cleanup failures: tests decoded images through
   SkiaSharp file paths, whose inheritable native handles leaked into workers
   started by parallel tests. Images are now decoded from memory.
+- Export full songs (`Fwk.Sound.SplitAcbData`). Their TextAsset chunks are joined in
+  serialized order and XORed with `0x5A`, as the game's SplitAcbLoader does, and the
+  recovered ACB takes the existing HCA → AAC path. This adds a previously skipped
+  input type; profiles and existing outputs are unchanged.

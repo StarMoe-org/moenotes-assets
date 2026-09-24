@@ -3,7 +3,7 @@ namespace MoenotesAssets;
 public static class ExportSelection
 {
     public static bool Supported(Location target) => target.Provider == Catalog.Cri || target.ResourceType.StartsWith("CriWare.", StringComparison.Ordinal)
-        || target.ResourceType is "UnityEngine.TextAsset" or "UnityEngine.Texture2D" or "UnityEngine.Sprite" or "UnityEngine.U2D.SpriteAtlas";
+        || target.ResourceType is "UnityEngine.TextAsset" or "UnityEngine.Texture2D" or "UnityEngine.Sprite" or "UnityEngine.U2D.SpriteAtlas" or Worker.SplitAcbType;
 
     public static string[] UniqueKeys(Catalog catalog, IEnumerable<string> keys)
     {
