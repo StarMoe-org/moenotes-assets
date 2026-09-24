@@ -58,3 +58,7 @@ changes require explicit release notes; a frozen stable API is not claimed.
   matches the USM header; MPEG and mismatched-timing sources are still re-encoded.
   Video has its own profile, so previously exported images/text/audio stay reusable.
 - Close the demuxed USM video before renaming it to `.ivf`, which failed on Windows.
+- Decode USM ADX audio with VGAudio instead of FFmpeg. FFmpeg's ADX demuxer failed
+  most mono and some stereo streams at the standard end frame ("corrupt input
+  packet" / I/O error), and its decoder deviates from CRI's scale and coefficient
+  arithmetic. The movie profile is now v2, so affected videos are exported again.

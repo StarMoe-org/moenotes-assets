@@ -1,5 +1,6 @@
 using MoenotesAssets;
 using VGAudio.Codecs.CriHca;
+using VGAudio.Containers.Adx;
 using VGAudio.Containers.Hca;
 using VGAudio.Formats.Pcm16;
 using Xunit;
@@ -55,5 +56,25 @@ public class MediaTests
         Assert.Equal($"{headerRate}/1", (string?)stream["r_frame_rate"]);
         Assert.Equal(reencoded ? 64 : 63, (int?)stream["width"]);
         Assert.Equal("10", (string?)stream["nb_read_frames"]);
+    }
+    // Both lengths end in a final read FFmpeg's ADX demuxer rejects with -xerror: frame-aligned
+    // for mono, and only the 18-byte end frame for stereo with a multiple of 128 frames.
+    [Theory]
+    [InlineData(1, 48000, 19200)]
+    [InlineData(2, 32000, 12288)]
+    public async Task UsmAdxAudioIsDecodedWithoutFfmpegDemuxer(int channels, int sampleRate, int samples)
+    {
+        using var dir = new TempDirectory(); var config = new Config { CdnRoot = "https://cdn.invalid" }; var raw = Path.Combine(dir.Path, "source.ivf");
+        await Processes.Run(config.Ffmpeg, ["-nostdin", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=25", "-t", "0.4", "-pix_fmt", "yuv420p", "-c:v", "libvpx-vp9", "-f", "ivf", raw], CancellationToken.None);
+        var pcm = Enumerable.Range(0, channels).Select(c => Enumerable.Range(0, samples).Select(i => (short)(Math.Sin(i * 0.05 * (c + 1)) * 6000)).ToArray()).ToArray();
+        var adx = new AdxWriter().GetFile(new Pcm16FormatBuilder(pcm, sampleRate).Build());
+        var path = Path.Combine(dir.Path, "movie.usm"); File.WriteAllBytes(path, CriFixture.Usm(File.ReadAllBytes(raw), config.CriKey, 10, 25, 9, adx));
+        var job = Job(config, path, Path.Combine(dir.Path, "out"), "CriWare.Assets.CriManaUsmAsset");
+        var result = await Processes.Worker(job, dir.Path, CancellationToken.None); Assert.Single(result);
+        var streams = (await CriMedia.Probe(config, Path.Combine(job.Output, result[0].Name), CancellationToken.None))["streams"]!.AsArray();
+        var audio = streams.Single(s => (string?)s!["codec_type"] == "audio")!;
+        Assert.Equal("aac", (string?)audio["codec_name"]);
+        Assert.Equal(channels, (int?)audio["channels"]);
+        Assert.Equal(sampleRate.ToString(System.Globalization.CultureInfo.InvariantCulture), (string?)audio["sample_rate"]);
     }
 }

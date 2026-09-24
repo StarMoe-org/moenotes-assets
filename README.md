@@ -80,7 +80,8 @@ labels, never output filesystem paths. Known unsupported types and ambiguous
 labels are recorded as skipped before download; decoder/data errors still fail.
 Raw resource containers are not advertised as successful exports.
 
-Audio uses 96 kbps mono / 192 kbps stereo AAC without normalization. VP9 video is
+Audio uses 96 kbps mono / 192 kbps stereo AAC without normalization. USM ADX/HCA
+audio is decoded by VGAudio before AAC encoding. VP9 video is
 copied without re-encoding when its IVF timing matches the USM header. Other video
 uses libx264 CRF 20, medium, yuv420p and faststart; odd dimensions are padded to even.
 Every output media file is probed and fully decoded before publication, except that

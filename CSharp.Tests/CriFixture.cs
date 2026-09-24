@@ -30,7 +30,7 @@ internal static class CriFixture
             ("TrackTable", Utf(("EventIndex", 0))), ("TrackEventTable", Utf(("Command", new byte[] { 7, 0xd0, 4, 0, 2, 0, 0, 0, 0, 0 }))),
             ("SynthTable", Utf(("ReferenceItems", new byte[] { 0, 1, 0, 0 }))), ("WaveformTable", Utf(("MemoryAwbId", 0), ("Streaming", streaming ? 1 : 0), ("EncodeType", 2))));
     }
-    public static byte[] Usm(byte[] video, ulong key, int frames = 0, int rate = 25, int codec = 1)
+    public static byte[] Usm(byte[] video, ulong key, int frames = 0, int rate = 25, int codec = 1, byte[]? adx = null)
     {
         using var stream = new MemoryStream(); Chunk("CRID", 1, Utf(("name", "synthetic"))); Chunk("@SFV", 1, frames == 0 ? Utf(("mpeg_codec", codec)) : Utf(("mpeg_codec", codec), ("total_frames", frames), ("framerate_n", rate), ("framerate_d", 1)));
         var bytes = (byte[])video.Clone(); var mask = MoenotesAssets.Usm.VideoMask(key);
@@ -40,7 +40,15 @@ internal static class CriFixture
             state = mask.Select(b => (byte)~b).ToArray();
             for (int i = 0x140; i < bytes.Length; i++) { int lane = (i - 0x140) & 31; var plain = bytes[i]; bytes[i] ^= state[lane]; state[lane] = (byte)(plain ^ ~mask[lane]); }
         }
-        Chunk("@SFV", 0, bytes); Chunk("@SFV", 2, "#CONTENTS END"u8.ToArray()); return stream.ToArray();
+        Chunk("@SFV", 0, bytes); Chunk("@SFV", 2, "#CONTENTS END"u8.ToArray());
+        if (adx != null)
+        {
+            // The ADX audio mask is a plain XOR, so masking mirrors Usm.Demux.
+            var audioMask = mask.Select((b, i) => (i & 1) == 0 ? (byte)~b : "URUC"u8[(i >> 1) & 3]).ToArray();
+            var audio = (byte[])adx.Clone(); for (int i = 0x140; i < audio.Length; i++) audio[i] ^= audioMask[(i - 0x140) & 31];
+            Chunk("@SFA", 1, Utf(("audio_codec", 2))); Chunk("@SFA", 0, audio); Chunk("@SFA", 2, "#CONTENTS END"u8.ToArray());
+        }
+        return stream.ToArray();
         void Chunk(string type, int kind, byte[] payload)
         {
             var header = new byte[32]; Encoding.ASCII.GetBytes(type).CopyTo(header, 0); BinaryPrimitives.WriteUInt32BigEndian(header.AsSpan(4), (uint)(24 + payload.Length));

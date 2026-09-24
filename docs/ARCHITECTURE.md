@@ -27,7 +27,9 @@ rasterization work are bounded. The bundled class package supports stripped type
 trees; `class_data` can explicitly override it for other Unity revisions.
 
 `CriTables` reads bounded @UTF/AFS2 structures and resolves embedded cue waveform
-references. VGAudio decodes HCA after CRC and strict frame/key validation. USM
+references. VGAudio decodes HCA after CRC and strict frame/key validation, and
+decodes USM ADX (linear, 18-byte frames, unencrypted) using CRI's scale and
+coefficient arithmetic; FFmpeg's ADX demuxer rejects many valid streams. USM
 chunks are demasked, checked for stream ambiguity/end markers, and passed through
 FFmpeg. VP9 is copied into MP4 when its IVF timing matches the USM header; other
 video is re-encoded to H.264. Encoded outputs are probed, compared to their source

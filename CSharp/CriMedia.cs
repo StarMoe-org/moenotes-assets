@@ -1,7 +1,9 @@
 using System.Buffers.Binary;
 using System.Globalization;
 using System.Text.Json.Nodes;
+using VGAudio.Codecs.CriAdx;
 using VGAudio.Codecs.CriHca;
+using VGAudio.Containers.Adx;
 using VGAudio.Containers.Hca;
 using VGAudio.Containers.Wave;
 using VGAudio.Utilities;
@@ -40,6 +42,22 @@ public static class CriMedia
         var audio = reader.Read(bytes);
         using var wav = File.Create(path); new WaveWriter().WriteToStream(audio, wav);
         return hca.ChannelCount;
+    }
+    // FFmpeg's ADX demuxer rejects the short final read left by the standard end frame of
+    // most mono and some stereo streams, and its decoder drifts from CRI's scale + 1 and
+    // truncated coefficients. VGAudio matches CRI's arithmetic and reads only declared frames.
+    public static int DecodeAdx(byte[] bytes, Config config, string path)
+    {
+        var meta = new AdxReader().ReadMetadata(new MemoryStream(bytes));
+        Require(meta.HeaderSize >= 6 && meta.HeaderSize + 4 <= bytes.Length && bytes.AsSpan(meta.HeaderSize - 2, 6).SequenceEqual("(c)CRI"u8), "Invalid ADX header");
+        Require(meta.EncodingType == CriAdxType.Linear && meta.FrameSize == 18 && meta.BitDepth == 4 && meta.Revision == 0, "Unsupported ADX format");
+        var frames = ((long)meta.SampleCount + meta.SamplesPerFrame - 1) / meta.SamplesPerFrame;
+        Require(meta.ChannelCount is 1 or 2 && meta.SampleCount > 0 &&
+            meta.HeaderSize + 4L + frames * meta.FrameSize * meta.ChannelCount <= bytes.Length &&
+            (long)meta.SampleCount * meta.ChannelCount * 2 <= config.ExpandedBytes, "ADX size/channel budget");
+        var audio = new AdxReader().Read(bytes);
+        using var wav = File.Create(path); new WaveWriter().WriteToStream(audio, wav);
+        return meta.ChannelCount;
     }
     private sealed record Cue(long Id, string Name);
     private static async Task Acb(string path, Worker.Output output, CancellationToken token)
@@ -181,7 +199,10 @@ public static class CriMedia
         args.AddRange(["-i", video]);
         if (audio != null)
         {
-            if (audio.EndsWith(".hca", StringComparison.Ordinal)) { var wav = audio + ".wav"; DecodeHca(File.ReadAllBytes(audio), 0, config, wav); audio = wav; }
+            // Demux yields only HCA or ADX; both are decoded here instead of by FFmpeg.
+            var wav = audio + ".wav"; var encoded = File.ReadAllBytes(audio);
+            if (audio.EndsWith(".adx", StringComparison.Ordinal)) DecodeAdx(encoded, config, wav); else DecodeHca(encoded, 0, config, wav);
+            audio = wav;
             var ap = await Probe(config, audio, token); var channels = (int?)ap["streams"]?[0]?["channels"]; Require(channels is 1 or 2, "Unsupported channels");
             originals.Add(ap); args.AddRange(["-i", audio, "-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-b:a", channels == 1 ? "96k" : "192k"]);
         }
