@@ -71,3 +71,9 @@ changes require explicit release notes; a frozen stable API is not claimed.
   serialized order and XORed with `0x5A`, as the game's SplitAcbLoader does, and the
   recovered ACB takes the existing HCA → AAC path. This adds a previously skipped
   input type; profiles and existing outputs are unchanged.
+- Startup recovery reads export IDs, referenced blob hashes and unfinished tasks in
+  SQL instead of deserializing every manifest, file record and task before listening.
+  A `[startup]` log line reports each recovery phase's duration.
+- Log ASP.NET Core framework events at Warning and above; per-request lines (four per
+  file download) are no longer written. The container clears `ASPNETCORE_HTTP_PORTS`
+  so the configured listener no longer triggers a port-override warning.

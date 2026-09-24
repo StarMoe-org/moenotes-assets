@@ -8,6 +8,8 @@ COPY CSharp/ CSharp/
 RUN dotnet publish CSharp/MoenotesAssets.csproj -c Release --no-restore -o /app -p:UseAppHost=false
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS runtime
+# The listener comes from config.toml; clearing the base image's port avoids the override warning.
+ENV ASPNETCORE_HTTP_PORTS=
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg tini \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir /data && chown 65532:65532 /data

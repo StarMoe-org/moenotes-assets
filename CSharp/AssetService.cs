@@ -38,20 +38,27 @@ public sealed partial class AssetService : IAsyncDisposable
                 Require(!Directory.Exists(path) || !File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint), "Symlink storage directory");
                 Directory.CreateDirectory(path);
             }
-            Store = new Store(Config.DataDir);
+            // Startup is serial and precedes listening; log phases so slow volumes show where time goes.
+            var clock = System.Diagnostics.Stopwatch.StartNew(); var phases = new List<string>();
+            void Phase(string name) { phases.Add($"{name}={clock.Elapsed.TotalSeconds:F1}s"); clock.Restart(); }
+            Store = new Store(Config.DataDir); Phase("store");
             Blobs = new BlobStore(Config.DataDir);
-            Blobs.Recover(Store.All<FileRecord>("file").Where(f => f.BlobSha256 != null).Select(f => f.BlobSha256!).ToHashSet(StringComparer.Ordinal));
+            Blobs.Recover(Store.ReferencedBlobs()); Phase("blobs");
             foreach (var scope in Store.All<Snapshot>("snapshot").GroupBy(s => Store.ScopeSetting(s.Region, s.Locale, s.BiliVersion)))
             {
                 var preferred = Store.Get<string>("setting", scope.Key) ?? scope.OrderBy(s => s.Created).Last().Id;
                 foreach (var retained in scope)
                     if (!Store.HasCatalogIndex(retained.Id)) Store.IndexSnapshot(retained, Store.HasCatalogContent(retained.ContentSha256) ? null : Catalog.Parse(File.ReadAllBytes(CatalogPath(retained))), retained.Id == preferred);
             }
-            foreach (var task in Store.All<TaskInfo>("task"))
-                if (task.State is "queued" or "running") Store.Put("task", task.Id, task with { State = "failed", Error = "Interrupted by service restart; resubmit failed keys", Updated = Now });
+            Phase("catalogs");
+            foreach (var task in Store.UnfinishedTasks())
+                Store.Put("task", task.Id, task with { State = "failed", Error = "Interrupted by service restart; resubmit failed keys", Updated = Now });
             foreach (var path in Directory.EnumerateFileSystemEntries(Path.Combine(Config.DataDir, "tmp"))) RemoveTree(path);
+            var published = Store.Ids("export");
             foreach (var path in Directory.EnumerateDirectories(Path.Combine(Config.DataDir, "exports")))
-                if (Store.Get<Manifest>("export", Path.GetFileName(path)) == null) RemoveTree(path);
+                if (!published.Contains(Path.GetFileName(path))) RemoveTree(path);
+            Phase("exports");
+            Console.Error.WriteLine($"[startup] storage recovery {string.Join(' ', phases)} ({published.Count} exports)");
             http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false, AutomaticDecompression = DecompressionMethods.None }) { Timeout = Timeout.InfiniteTimeSpan };
             downloads = new(config.Downloads); workers = new(config.Workers); videos = new(config.Videos); queue = new(config.QueueLimit);
             Budget = new(config.TempBytes);

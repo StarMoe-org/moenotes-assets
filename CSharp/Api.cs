@@ -12,6 +12,9 @@ public static class Api
         var keyHash = string.IsNullOrWhiteSpace(apiKey) ? null : SHA256.HashData(Encoding.UTF8.GetBytes(apiKey));
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [], ApplicationName = typeof(Api).Assembly.GetName().Name });
         builder.WebHost.UseUrls(url ?? $"http://{service.Config.Listen}");
+        // Per-request framework logs (request start/finish, endpoint, file result) are four lines per file download.
+        // Keep warnings and errors; service events and failed requests are logged separately.
+        builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
         builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 2 << 20);
         builder.Services.ConfigureHttpJsonOptions(options =>
         {
