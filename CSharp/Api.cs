@@ -14,7 +14,12 @@ public static class Api
             options.SerializerOptions.PropertyNamingPolicy = Json.Options.PropertyNamingPolicy;
             options.SerializerOptions.UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow;
         });
-        if (service.Config.CorsOrigins.Length > 0) builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy.WithOrigins(service.Config.CorsOrigins).WithMethods("GET", "HEAD", "POST").WithHeaders("Content-Type", "Range", "If-None-Match", "If-Range").WithExposedHeaders("ETag", "Content-Range", "Accept-Ranges", "Content-Length", "Location")));
+        if (service.Config.CorsOrigins.Length > 0) builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
+        {
+            if (service.Config.CorsOrigins.Contains("*")) policy.AllowAnyOrigin();
+            else policy.WithOrigins(service.Config.CorsOrigins);
+            policy.WithMethods("GET", "HEAD", "POST").WithHeaders("Content-Type", "Range", "If-None-Match", "If-Range").WithExposedHeaders("ETag", "Content-Range", "Accept-Ranges", "Content-Length", "Location");
+        }));
         var app = builder.Build();
         if (service.Config.CorsOrigins.Length > 0) app.UseCors();
         app.Use(async (context, next) =>
