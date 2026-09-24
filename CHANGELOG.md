@@ -40,3 +40,6 @@ changes require explicit release notes; a frozen stable API is not claimed.
   key; disable them when unconfigured and keep browsing/files public.
 - Add persistent FIFO all-language refresh/export batches, queue inspection,
   cancellation, restart recovery and throttled task progress logs.
+- Fix full-band HCA 3.0 noise decoding, use USM frame timing instead of raw MPEG
+  duration estimates, omit unnecessary script metadata for supported data exports,
+  collapse export aliases and report unsupported inputs as skipped.

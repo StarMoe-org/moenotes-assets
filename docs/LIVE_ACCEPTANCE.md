@@ -60,3 +60,18 @@ The 30 local dependencies require the relevant APK/game files for complete sourc
 coverage; this service does not currently resolve those embedded files. Docker
 packaging is provided, but container execution was not tested because the local
 Docker daemon was not running. Final artifacts and history are not auto-evicted.
+
+## Live failure investigation
+
+The reported first 80 items contained 35 failures. All 35 were reproduced locally.
+After the fixes, 15 previously failing items exported successfully (9 audio banks,
+5 textures, 1 video); 20 unsupported object types were explicitly skipped, not
+claimed as successful files. Each audio bank's first waveform was also decoded
+with independent vgmstream r2117: PCM lengths matched and maximum 16-bit sample
+difference was one unit. The USM contains 450 frames at 30 fps (15 seconds), while
+raw MPEG probing incorrectly estimated 1.13 seconds. Container timing now drives
+encoding and validation. No game payloads or external validation tools are shipped.
+
+A subsequent pass over all 80 items produced 59 exports, 20 skips and one local
+Windows file-sharing error; this transient error remains subject to retest. This
+is sample validation, not a claim that the full game inventory is exportable.

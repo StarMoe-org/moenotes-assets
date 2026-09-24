@@ -27,6 +27,7 @@ public static class CriMedia
             (long)hca.FrameCount * 1024 * hca.ChannelCount * 2 <= config.ExpandedBytes, "HCA size/channel budget");
         var effective = subkey == 0 ? config.CriKey : unchecked(config.CriKey * (((ulong)subkey << 16) | ((ulong)(ushort)~subkey + 2)));
         var key = hca.EncryptionType switch { 0 => new CriHcaKey(CriHcaKey.Type.Type0), 1 => new CriHcaKey(CriHcaKey.Type.Type1), 56 => new CriHcaKey(effective), _ => throw new InvalidDataException("Unsupported HCA cipher") };
+        if (meta.Version == 0x300) { Hca3.Decode(bytes, meta, key, path); return hca.ChannelCount; }
         var frame = new CriHcaFrame(hca); var checksum = new Crc16(0x8005);
         for (var index = 0; index < hca.FrameCount; index++)
         {
@@ -152,9 +153,24 @@ public static class CriMedia
     private static async Task Movie(string path, Worker.Output output, CancellationToken token)
     {
         var config = output.Job.Config; var stage = Path.GetDirectoryName(output.Job.Output)!;
-        var (video, audio) = Usm.Demux(path, stage, config);
+        var demuxed = Usm.Demux(path, stage, config);
+        var video = demuxed.Video; var audio = demuxed.Audio;
         var original = await Probe(config, video, token); var originals = new List<JsonObject> { original };
-        var args = new List<string> { "-i", video };
+        var args = new List<string>();
+        var source = original["streams"]![0]!;
+        if (demuxed.Frames is { } frames)
+            Require(long.TryParse((string?)source["nb_read_frames"], out var decoded) && decoded == frames, "USM source frame count mismatch");
+        if (demuxed.RateNumerator is { } numerator && demuxed.RateDenominator is { } denominator)
+        {
+            var rate = $"{numerator}/{denominator}";
+            Require(long.TryParse((string?)source["nb_read_frames"], out var count) && count > 0, "Missing source frame count");
+            // Raw MPEG duration/r_frame_rate can be bitrate/field-rate estimates.
+            // The USM stream header is authoritative for presentation timing.
+            source["r_frame_rate"] = rate;
+            source["duration"] = (count * (double)denominator / numerator).ToString("R", CultureInfo.InvariantCulture);
+            args.AddRange(["-r", rate]);
+        }
+        args.AddRange(["-i", video]);
         if (audio != null)
         {
             if (audio.EndsWith(".hca", StringComparison.Ordinal)) { var wav = audio + ".wav"; DecodeHca(File.ReadAllBytes(audio), 0, config, wav); audio = wav; }

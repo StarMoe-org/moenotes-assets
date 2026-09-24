@@ -17,9 +17,9 @@ public static class Json
 public sealed record Snapshot(string Id, string ContentSha256, string Region, string Locale, string BiliVersion,
     string CdnRoot, string RemoteHash, long Created);
 public sealed record ExportRequest(string[]? Keys = null, string? Prefix = null, string? Snapshot = null, string? Region = null, string? Locale = null);
-public sealed record ItemResult(string Key, string? ExportId, string? Error);
+public sealed record ItemResult(string Key, string? ExportId, string? Error, string? SkipReason = null);
 public sealed record TaskInfo(string Id, string Kind, string State, string? Snapshot, int Total, int Completed,
-    ItemResult[] Results, string? Error, long Created, long Updated);
+    ItemResult[] Results, string? Error, long Created, long Updated, int Skipped = 0);
 public sealed record Artifact(string Name, string Label, string MediaType, long Bytes, string Sha256, object? Metadata);
 public sealed record PublishedFile(string Id, string Name, string Label, string MediaType, long Bytes, string Sha256, object? Metadata);
 public sealed record Source(Location Location, string DownloadSha256, string? PlainSha256 = null);

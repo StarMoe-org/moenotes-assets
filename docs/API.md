@@ -109,8 +109,14 @@ make raw hashes unsuitable for identifying equal plaintext across sources.
 
 `POST /exports` takes exactly one of nonempty `keys` or a `prefix` string, plus
 optional `snapshot`, `region`, `locale`. Unknown JSON members are rejected.
-An empty prefix selects all keys, including unsupported classes. Keys are sorted
-and deduplicated; missing/unsupported assets fail individually.
+An empty prefix selects the entire catalog. Prefix selections collapse aliases
+for an exact target into one export, preferring readable addresses; the browsing
+index still retains every alias. Known unsupported types and ambiguous labels
+produce results with `skip_reason`, not a download attempt. `skipped` on the task
+counts those entries. Skips have null export_id/error and are not exported files.
+Completed includes successful, skipped and failed items. A succeeded task can
+contain skips; inspect skipped/results when checking export coverage. Missing keys
+and actual download/decoder errors still fail individually.
 
 ```json
 {"keys":["Live/MusicScore/0001/0001_00"],"region":"tw","locale":"en"}
@@ -129,7 +135,7 @@ Sources include `location`, `download_sha256`, `plain_sha256`. Files include
 source names; names are generated. Metadata includes image/cue/media information.
 Separate snapshot manifests can point to the same content-addressed file bytes.
 Each request has its own task; identical snapshot/key/profile exports are reused.
-Profile: `csharp-json-png-aac-h264-v1`.
+Profile: `csharp-json-png-aac-h264-v2`.
 
 Missing records return 404; exhausted queue 429; invalid requests 400. Body limit
 is 2 MiB. Files support 206/304/416; mismatched If-Range sends the full file.
@@ -186,7 +192,8 @@ serialize it. `queue_limit` caps nonterminal batches; excess submissions return
 429. Duplicate submissions create separate queued batches.
 
 Zeabur/container logs include batch admission/start/step/end and child task status.
-Export progress is checkpointed/logged after every 20 completed resources or on a
+Export progress is checkpointed/logged after every 20 completed resources (at most
+once per second), or on a
 resource completion after at least 10 seconds since the last update. A single
 long-running resource can therefore leave counts unchanged for longer than 10
 seconds. Terminal task logs include final completed/total and failure counts.

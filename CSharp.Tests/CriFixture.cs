@@ -30,9 +30,9 @@ internal static class CriFixture
             ("TrackTable", Utf(("EventIndex", 0))), ("TrackEventTable", Utf(("Command", new byte[] { 7, 0xd0, 4, 0, 2, 0, 0, 0, 0, 0 }))),
             ("SynthTable", Utf(("ReferenceItems", new byte[] { 0, 1, 0, 0 }))), ("WaveformTable", Utf(("MemoryAwbId", 0), ("Streaming", streaming ? 1 : 0), ("EncodeType", 2))));
     }
-    public static byte[] Usm(byte[] video, ulong key)
+    public static byte[] Usm(byte[] video, ulong key, int frames = 0, int rate = 25)
     {
-        using var stream = new MemoryStream(); Chunk("CRID", 1, Utf(("name", "synthetic"))); Chunk("@SFV", 1, Utf(("mpeg_codec", 1)));
+        using var stream = new MemoryStream(); Chunk("CRID", 1, Utf(("name", "synthetic"))); Chunk("@SFV", 1, frames == 0 ? Utf(("mpeg_codec", 1)) : Utf(("mpeg_codec", 1), ("total_frames", frames), ("framerate_n", rate), ("framerate_d", 1)));
         var bytes = (byte[])video.Clone(); var mask = MoenotesAssets.Usm.VideoMask(key);
         if (bytes.Length >= 0x240)
         {

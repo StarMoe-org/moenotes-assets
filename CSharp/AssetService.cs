@@ -126,7 +126,7 @@ public sealed partial class AssetService : IAsyncDisposable
             {
                 try { Store.Put("task", task.Id, result with { Updated = Now }); }
                 catch (Exception e) { Console.Error.WriteLine($"Task persistence failed: {e.Message}"); }
-                Console.Error.WriteLine($"[task {task.Id}] {result.State} kind={kind} progress={result.Completed}/{result.Total} failed={result.Results.Count(r => r.Error != null)}");
+                Console.Error.WriteLine($"[task {task.Id}] {result.State} kind={kind} progress={result.Completed}/{result.Total} skipped={result.Skipped} failed={result.Results.Count(r => r.Error != null)}");
                 cancellations.TryRemove(task.Id, out _); cancellation.Dispose(); queue.Release();
                 running.TryRemove(task.Id, out _); completion.SetResult();
             }
@@ -184,6 +184,7 @@ public sealed partial class AssetService : IAsyncDisposable
         var keys = (request.Prefix != null ? catalog.Keys.Keys.Where(k => k.StartsWith(request.Prefix, StringComparison.Ordinal)).Take(Config.MaxKeys + 1) : request.Keys!)
             .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
         Require(keys.Length > 0 && keys.Length <= Config.MaxKeys && keys.All(k => k != null && k.Length <= 4096), "Empty or excessive selection");
+        if (request.Prefix != null) keys = ExportSelection.UniqueKeys(catalog, keys);
         return Start("export", snapshot.Id, keys.Length, async (task, token) =>
         {
             var results = new List<ItemResult>();
@@ -195,24 +196,29 @@ public sealed partial class AssetService : IAsyncDisposable
                     ItemResult item;
                     try
                     {
-                        var id = Crypto.Identity(snapshot.Id, key, Worker.Profile);
-                        var manifest = Store.Get<Manifest>("export", id);
-                        if (manifest == null)
+                        var skip = ExportSelection.SkipReason(catalog, key);
+                        if (skip != null) item = new(key, null, null, skip);
+                        else
                         {
-                            using var lease = await exportWork.Join(id, t => ExportOne(snapshot, catalog, key, id, t), ct);
-                            manifest = lease.Value;
+                            var id = Crypto.Identity(snapshot.Id, key, Worker.Profile);
+                            var manifest = Store.Get<Manifest>("export", id);
+                            if (manifest == null)
+                            {
+                                using var lease = await exportWork.Join(id, t => ExportOne(snapshot, catalog, key, id, t), ct);
+                                manifest = lease.Value;
+                            }
+                            item = new(key, manifest.Id, null);
                         }
-                        item = new(key, manifest.Id, null);
                     }
                     catch (Exception e) { item = new(key, null, e.Message); }
                     lock (results)
                     {
                         results.Add(item);
-                        if (results.Count % 20 == 0 || progress.Elapsed >= TimeSpan.FromSeconds(10))
+                        if ((results.Count % 20 == 0 && progress.Elapsed >= TimeSpan.FromSeconds(1)) || progress.Elapsed >= TimeSpan.FromSeconds(10))
                         {
-                            task = task with { Completed = results.Count, Results = results.OrderBy(r => r.Key, StringComparer.Ordinal).ToArray(), Updated = Now };
+                            task = task with { Completed = results.Count, Skipped = results.Count(r => r.SkipReason != null), Results = results.OrderBy(r => r.Key, StringComparer.Ordinal).ToArray(), Updated = Now };
                             Store.Put("task", task.Id, task);
-                            Console.Error.WriteLine($"[task {task.Id}] export region={snapshot.Region} locale={snapshot.Locale} progress={results.Count}/{keys.Length} succeeded={results.Count(r => r.ExportId != null)} failed={results.Count(r => r.Error != null)}");
+                            Console.Error.WriteLine($"[task {task.Id}] export region={snapshot.Region} locale={snapshot.Locale} progress={results.Count}/{keys.Length} succeeded={results.Count(r => r.ExportId != null)} skipped={task.Skipped} failed={results.Count(r => r.Error != null)}");
                             progress.Restart();
                         }
                     }
@@ -220,7 +226,8 @@ public sealed partial class AssetService : IAsyncDisposable
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { }
             var successes = results.Count(r => r.ExportId != null);
-            return task with { Completed = results.Count, Results = results.OrderBy(r => r.Key, StringComparer.Ordinal).ToArray(), State = token.IsCancellationRequested ? "cancelled" : successes == keys.Length ? "succeeded" : successes > 0 ? "partial" : "failed" };
+            var skipped = results.Count(r => r.SkipReason != null);
+            return task with { Completed = results.Count, Skipped = skipped, Results = results.OrderBy(r => r.Key, StringComparer.Ordinal).ToArray(), State = token.IsCancellationRequested ? "cancelled" : successes + skipped == keys.Length ? "succeeded" : successes > 0 ? "partial" : "failed" };
         });
     }
     private async Task<Download> DownloadOne(Snapshot snapshot, Location location, CancellationToken token)
@@ -282,7 +289,7 @@ public sealed partial class AssetService : IAsyncDisposable
         try
         {
             var existing = Store.Get<Manifest>("export", id); if (existing != null) return existing;
-            var target = catalog.Target(key); var locations = catalog.Closure(key);
+            var target = catalog.Target(key); var locations = ExportSelection.Dependencies(catalog, key);
             if (target.Provider == Catalog.Cri || target.ResourceType.StartsWith("CriWare.", StringComparison.Ordinal))
             {
                 var raw = locations.Where(l => l.Provider == Catalog.Cri).ToArray();

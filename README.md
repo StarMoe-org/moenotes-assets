@@ -76,7 +76,8 @@ See [API](docs/API.md) for selection, cancellation, manifests and file ranges.
 | Supported USM MPEG-2 / IVF video with optional ADX/HCA | H.264/AAC MP4 |
 
 Asset paths are resolved exactly through bundle containers. Original names are
-labels, never output filesystem paths. Unsupported or ambiguous inputs fail;
+labels, never output filesystem paths. Known unsupported types and ambiguous
+labels are recorded as skipped before download; decoder/data errors still fail.
 raw resource containers are not advertised as successful exports.
 
 Audio uses 96 kbps mono / 192 kbps stereo AAC without normalization. Video uses
@@ -88,6 +89,9 @@ Not supported: arbitrary Unity versions/classes, models/scenes/animation, extern
 streaming AWB discovery, CPK, arbitrary cue playback, song-segment assembly,
 multichannel audio, alpha or multi-track video. Tight sprites require supported
 triangle/float-position geometry. Unsupported geometry fails explicitly.
+HCA 3.0 full-band mono/stereo with noise reconstruction is supported; HCA 3.0
+HFR/joint-stereo/MS/ATH modes remain explicitly unsupported. USM header frame
+counts and frame rates control video timing instead of raw MPEG duration estimates.
 The embedded class database can be overridden with `class_data = "/path/classdata.tpk"`.
 
 ## Storage and migration

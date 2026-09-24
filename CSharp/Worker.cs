@@ -10,7 +10,7 @@ namespace MoenotesAssets;
 public static class Worker
 {
     // The C# implementation has its own identity: codec/library changes can change output bytes.
-    public const string Profile = "csharp-json-png-aac-h264-v1";
+    public const string Profile = "csharp-json-png-aac-h264-v2";
     public sealed class Output(WorkerJob job)
     {
         public WorkerJob Job { get; } = job;

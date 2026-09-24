@@ -10,7 +10,7 @@ Project code is MIT licensed. This does not relicense dependencies or game asset
 - Tomlyn: BSD-2-Clause. Microsoft.Data.Sqlite: MIT; bundled SQLite has its own
   public-domain/license notices. Direct/transitive versions are locked in
   `CSharp/packages.lock.json`; test dependencies have a separate lock file.
-- CRI USM mask derivation and ACB/USM layout handling were ported/adapted with
+- CRI USM mask derivation, HCA 3.0 resolution/noise reconstruction, and ACB/USM layout handling were ported/adapted with
   reference to cridecoder 0.3.5, MIT, copyright 2026 Haruki Dev Team.
   Its notice is `third_party/cridecoder-csharp-port-LICENSE.txt`.
 - Sprite geometry/layout handling was informed by AssetStudio's SpriteHelper,

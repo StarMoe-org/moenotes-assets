@@ -21,13 +21,23 @@ public class MediaTests
         var result = await Processes.Worker(job, dir.Path, CancellationToken.None); Assert.Single(result); Assert.Equal("audio/mp4", result[0].MediaType); Assert.Equal("synthetic-tone", result[0].Label);
         File.WriteAllBytes(path, CriFixture.Acb(hca, true)); var exception = await Assert.ThrowsAsync<InvalidDataException>(() => Processes.Worker(job with { Output = Path.Combine(dir.Path, "external") }, dir.Path, CancellationToken.None)); Assert.Contains("External AWB", exception.Message);
     }
-    [Fact]
-    public async Task EncryptedUsmToSilentH264()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EncryptedUsmToSilentH264(bool containerTiming)
     {
         using var dir = new TempDirectory(); var config = new Config { CdnRoot = "https://cdn.invalid" }; var raw = Path.Combine(dir.Path, "source.m2v");
         await Processes.Run(config.Ffmpeg, ["-nostdin", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=64x48:rate=25", "-t", "0.4", "-c:v", "mpeg2video", "-f", "mpeg2video", raw], CancellationToken.None);
-        var path = Path.Combine(dir.Path, "movie.usm"); File.WriteAllBytes(path, CriFixture.Usm(File.ReadAllBytes(raw), config.CriKey));
+        var path = Path.Combine(dir.Path, "movie.usm"); File.WriteAllBytes(path, CriFixture.Usm(File.ReadAllBytes(raw), config.CriKey, containerTiming ? 10 : 0, containerTiming ? 50 : 25));
         var job = Job(config, path, Path.Combine(dir.Path, "out"), "CriWare.Assets.CriManaUsmAsset");
         var result = await Processes.Worker(job, dir.Path, CancellationToken.None); Assert.Single(result); Assert.Equal("video/mp4", result[0].MediaType);
+        if (containerTiming)
+        {
+            var probe = await CriMedia.Probe(config, Path.Combine(job.Output, result[0].Name), CancellationToken.None);
+            Assert.Equal("50/1", (string?)probe["streams"]![0]!["r_frame_rate"]);
+            File.WriteAllBytes(path, CriFixture.Usm(File.ReadAllBytes(raw), config.CriKey, 11, 50));
+            var exception = await Assert.ThrowsAsync<InvalidDataException>(() => Processes.Worker(job with { Output = Path.Combine(dir.Path, "wrong-frames") }, dir.Path, CancellationToken.None));
+            Assert.Contains("source frame count mismatch", exception.Message);
+        }
     }
 }

@@ -5,7 +5,8 @@ namespace MoenotesAssets;
 // Mask derivation follows the CRI USM interoperability implementation in cridecoder (MIT).
 public static class Usm
 {
-    public static (string Video, string? Audio) Demux(string path, string stage, Config config)
+    public sealed record Streams(string Video, string? Audio, long? Frames, long? RateNumerator, long? RateDenominator);
+    public static Streams Demux(string path, string stage, Config config)
     {
         var mask = VideoMask(config.CriKey); var audioMask = mask.Select((b, i) => (i & 1) == 0 ? (byte)~b : "URUC"u8[(i >> 1) & 3]).ToArray();
         using var input = File.OpenRead(path); var header = new byte[32];
@@ -13,6 +14,7 @@ public static class Usm
         using var video = File.Create(videoPath); using var audio = File.Create(audioPath);
         var channels = new HashSet<(string, byte)>(); var ended = new HashSet<(string, byte)>();
         int? audioCodec = null, videoCodec = null; long total = 0;
+        long? frames = null, rateNumerator = null, rateDenominator = null;
         while (input.Position < input.Length)
         {
             var start = input.Position; input.ReadExactly(header); var type = Encoding.ASCII.GetString(header, 0, 4);
@@ -29,7 +31,16 @@ public static class Usm
                 {
                     var rows = CriTables.Parse(bytes); Require(rows.Length > 0, "Empty USM stream header");
                     if (type == "@SFA") audioCodec = (int)rows[0].Number("audio_codec", -1);
-                    else videoCodec = (int)rows[0].Number("mpeg_codec", -1);
+                    else
+                    {
+                        videoCodec = (int)rows[0].Number("mpeg_codec", -1);
+                        if (rows[0].ContainsKey("total_frames")) { frames = rows[0].Number("total_frames"); Require(frames > 0, "Invalid USM frame count"); }
+                        if (rows[0].ContainsKey("framerate_n") || rows[0].ContainsKey("framerate_d"))
+                        {
+                            rateNumerator = rows[0].Number("framerate_n"); rateDenominator = rows[0].Number("framerate_d");
+                            Require(rateNumerator > 0 && rateDenominator > 0 && (double)rateNumerator / rateDenominator <= 240, "Invalid USM frame rate");
+                        }
+                    }
                 }
                 if (kind == 2 && bytes.AsSpan().StartsWith("#CONTENTS END"u8)) ended.Add((type, channel));
                 if (kind == 0)
@@ -56,9 +67,9 @@ public static class Usm
             if (magic.AsSpan().SequenceEqual("DKIF"u8)) { var renamed = Path.Combine(stage, "video.ivf"); File.Move(videoPath, renamed); videoPath = renamed; }
             else Require(videoCodec is null or 1 or 0, "Unsupported USM video codec");
         }
-        if (new FileInfo(audioPath).Length == 0) return (videoPath, null);
+        if (new FileInfo(audioPath).Length == 0) return new(videoPath, null, frames, rateNumerator, rateDenominator);
         if (audioCodec == 2) { var renamed = Path.Combine(stage, "audio.adx"); File.Move(audioPath, renamed); audioPath = renamed; }
-        return (videoPath, audioPath);
+        return new(videoPath, audioPath, frames, rateNumerator, rateDenominator);
     }
     public static void UnmaskVideo(Span<byte> bytes, byte[] mask)
     {
