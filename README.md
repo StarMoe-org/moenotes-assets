@@ -61,6 +61,7 @@ curl -X POST http://127.0.0.1:8091/exports \
 curl http://127.0.0.1:8091/tasks/TASK_ID -H "Authorization: Bearer $MOENOTES_API_KEY"
 curl http://127.0.0.1:8091/exports/EXPORT_ID
 curl http://127.0.0.1:8091/files/FILE_ID -o chart.json
+curl http://127.0.0.1:8091/zh-Hant/Live/MusicScore/0007/0007_03/   # files by asset path
 ```
 
 POST requests return `202` and a task ID. GET never starts downloads.

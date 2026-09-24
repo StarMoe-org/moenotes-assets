@@ -97,14 +97,15 @@ public static class Api
         app.MapGet("/tasks/{id}", (string id) => service.GetTask(id) is { } task ? Results.Json(task, Json.Options) : Results.NotFound(new { error = "Task not found" }));
         app.MapPost("/tasks/{id}/cancel", (string id) => Results.Json(service.Cancel(id), Json.Options));
         app.MapGet("/exports/{id}", (string id) => service.Manifest(id) is { } manifest ? Results.Json(manifest, Json.Options) : Results.NotFound(new { error = "Export not found" }));
-        app.MapMethods("/files/{id}", ["GET", "HEAD"], (string id, HttpContext context) =>
+        IResult ServeFile(HttpContext context, string id, string cacheControl)
         {
             var record = service.LookupFile(id); if (record == null) return Results.NotFound(new { error = "File not found" });
             var path = service.FilePath(record);
             if (!File.Exists(path)) return Results.NotFound(new { error = "File not found" });
-            context.Response.Headers.CacheControl = "public,max-age=31536000,immutable";
+            context.Response.Headers.CacheControl = cacheControl;
             return Results.File(path, record.File.MediaType, entityTag: new EntityTagHeaderValue('"' + record.File.Sha256 + '"'), enableRangeProcessing: true);
-        });
+        }
+        app.MapMethods("/files/{id}", ["GET", "HEAD"], (string id, HttpContext context) => ServeFile(context, id, "public,max-age=31536000,immutable"));
         app.MapGet("/regions", () => service.Config.Regions.Length == 0
             ? new[] { new { id = service.Config.Region, default_locale = service.Config.Locale, locales = service.Config.Locales.Length == 0 ? new[] { service.Config.Locale } : service.Config.Locales } }
             : service.Config.Regions.Select(r => new { id = r.Id, default_locale = r.Locale ?? service.Config.Locale, locales = r.Locales ?? new[] { r.Locale ?? service.Config.Locale } }).ToArray());
@@ -120,6 +121,28 @@ public static class Api
         app.MapPost("/bundles/verify", (VerifyRequest request) => Accepted(service.StartVerify(request)));
         app.MapGet("/diffs", (string from, string to, string? prefix, int? offset, int? limit, bool? include_unchanged) => service.Store.Diff(from, to, prefix, offset ?? 0, limit ?? 100, include_unchanged ?? false));
         app.MapGet("/storage", () => service.Store.StorageStats(service.Budget.Used));
+        // Path routes: /{locale}/{key}/{label}.{ext} serves a file, /{locale}/{key}/ lists them. Literal routes above take
+        // precedence, and a first segment that is not a configured locale is 404. A path follows the newest published
+        // export, so its content can change: short cache plus the content ETag, unlike immutable /files/{id}.
+        app.MapMethods("/{locale}/{**path}", ["GET", "HEAD"], (string locale, string? path, HttpContext context) =>
+        {
+            var notFound = Results.NotFound(new { error = "No published file at this path" });
+            path ??= "";
+            if (path.Length == 0 || context.Request.Path.Value!.EndsWith('/'))
+            {
+                var listed = service.PublishedExport(locale, path.TrimEnd('/'));
+                if (listed == null) return notFound;
+                context.Response.Headers.CacheControl = "public,max-age=60";
+                return Results.Json(AssetService.Listing(locale, listed), Json.Options);
+            }
+            var slash = path.LastIndexOf('/');
+            var manifest = slash > 0 ? service.PublishedExport(locale, path[..slash]) : null;
+            var matches = manifest == null ? [] : AssetService.PathMatches(manifest, path[(slash + 1)..]);
+            if (matches.Length == 0) return notFound;
+            if (matches.Any(f => f.Sha256 != matches[0].Sha256))
+                return Results.Conflict(new { error = "Several files share this name; use their /files/{id} from the key listing" });
+            return ServeFile(context, matches[0].Id, "public,max-age=600");
+        });
 
         return app;
     }

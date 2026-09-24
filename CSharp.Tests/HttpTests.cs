@@ -33,6 +33,8 @@ public class HttpTests
             var refresh = await http.PostAsync("/catalog/refresh", null); Assert.Equal(HttpStatusCode.Accepted, refresh.StatusCode);
             var task = Json.Read<TaskInfo>(await refresh.Content.ReadAsStringAsync()); var refreshed = await service.Wait(task.Id); Assert.Equal("succeeded", refreshed.State);
             var assets = await http.GetStringAsync("/assets"); Assert.Contains(Fixture.Key, assets);
+            var pathUrl = $"/zh-Hant/{Fixture.Key}/fixture.json";
+            Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync(pathUrl)).StatusCode);
             var first = service.StartExport(new(Keys: [Fixture.Key])); var second = service.StartExport(new(Keys: [Fixture.Key]));
             var results = await Task.WhenAll(service.Wait(first.Id), service.Wait(second.Id));
             foreach (var result in results) Assert.True(result.State == "succeeded", Json.Write(result));
@@ -41,6 +43,13 @@ public class HttpTests
             using var range = new HttpRequestMessage(HttpMethod.Get, "/files/" + fileId); range.Headers.Range = new(1, 4); var partial = await http.SendAsync(range); Assert.Equal(HttpStatusCode.PartialContent, partial.StatusCode); Assert.Equal(Fixture.Body[1..5], await partial.Content.ReadAsByteArrayAsync());
             using var conditional = new HttpRequestMessage(HttpMethod.Get, "/files/" + fileId); conditional.Headers.IfNoneMatch.Add(response.Headers.ETag!); Assert.Equal(HttpStatusCode.NotModified, (await http.SendAsync(conditional)).StatusCode);
             using var head = new HttpRequestMessage(HttpMethod.Head, "/files/" + fileId); var headResponse = await http.SendAsync(head); Assert.Equal(Fixture.Body.Length, headResponse.Content.Headers.ContentLength); Assert.Empty(await headResponse.Content.ReadAsByteArrayAsync());
+            var byPath = await http.GetAsync(pathUrl); Assert.Equal(Fixture.Body, await byPath.Content.ReadAsByteArrayAsync());
+            Assert.Equal(TimeSpan.FromSeconds(600), byPath.Headers.CacheControl!.MaxAge); Assert.Equal(response.Headers.ETag, byPath.Headers.ETag);
+            using var pathHead = new HttpRequestMessage(HttpMethod.Head, pathUrl); Assert.Equal(Fixture.Body.Length, (await http.SendAsync(pathHead)).Content.Headers.ContentLength);
+            var listing = Json.Read<AssetService.PathListing>(await http.GetStringAsync($"/zh-Hant/{Fixture.Key}/"));
+            Assert.Equal(pathUrl, Assert.Single(listing.Files).Path); Assert.Equal("/files/" + fileId, listing.Files[0].File);
+            foreach (var missing in new[] { $"/ja/{Fixture.Key}/fixture.json", $"/zh-Hant/{Fixture.Key}/other.json", "/zh-Hant/Live/MusicScore/", "/favicon.ico", "/zh-Hant/" })
+                Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync(missing)).StatusCode);
             var reused = await service.Wait(service.StartExport(new(Keys: [Fixture.Key])).Id); Assert.Equal("succeeded", reused.State); Assert.Equal(1, downloads);
             var mixed = await service.Wait(service.StartExport(new(Keys: [Fixture.Key, "missing"])).Id); Assert.Equal("partial", mixed.State);
             Assert.Equal(HttpStatusCode.BadRequest, (await http.PostAsJsonAsync("/exports", new { prefix = "", keys = new[] { Fixture.Key } })).StatusCode);

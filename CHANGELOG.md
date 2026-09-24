@@ -77,3 +77,6 @@ changes require explicit release notes; a frozen stable API is not claimed.
 - Log ASP.NET Core framework events at Warning and above; per-request lines (four per
   file download) are no longer written. The container clears `ASPNETCORE_HTTP_PORTS`
   so the configured listener no longer triggers a port-override warning.
+- Serve published files by asset path: `/{locale}/{key}/{label}{extension}`, plus a
+  `/{locale}/{key}/` listing. Paths follow the newest snapshot that has published the
+  key, use a 10-minute cache with the content ETag, and never start work.

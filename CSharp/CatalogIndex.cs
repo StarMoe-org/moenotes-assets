@@ -178,6 +178,17 @@ public sealed partial class Store
     {
         lock (gate) { using var command = Command("SELECT id FROM catalog_snapshots WHERE region=$r AND locale=$l AND version=$v AND current=1", [("$r", region), ("$l", locale), ("$v", version)]); return command.ExecuteScalar() as string; }
     }
+    /// <summary>Retained snapshots of one scope: the current one first, then newest to oldest.</summary>
+    public string[] ScopeSnapshots(string region, string locale, string version)
+    {
+        lock (gate)
+        {
+            using var command = Command("SELECT id FROM catalog_snapshots WHERE region=$r AND locale=$l AND version=$v ORDER BY current DESC, created DESC", [("$r", region), ("$l", locale), ("$v", version)]);
+            using var reader = command.ExecuteReader(); var ids = new List<string>();
+            while (reader.Read()) ids.Add(reader.GetString(0));
+            return ids.ToArray();
+        }
+    }
     public Snapshot RequireSnapshot(string id) => Get<Snapshot>("snapshot", id) ?? throw new ApiException(404, "Catalog snapshot not found");
     public CatalogStats[] Catalogs(string? region = null, string? locale = null)
     {

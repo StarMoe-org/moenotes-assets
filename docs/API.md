@@ -45,6 +45,36 @@ key from a trusted backend/admin client over HTTPS, not public frontend code.
 | POST | /tasks/{id}/cancel | Cancel; terminal tasks remain unchanged |
 | GET | /exports/{id} | Published manifest |
 | GET, HEAD | /files/{id} | File with Range, ETag and conditional requests |
+| GET, HEAD | /{locale}/{key}/{label}.{ext} | Newest published file by asset path (see Path routes) |
+| GET | /{locale}/{key}/ | Files of a key's newest published export, with their paths |
+
+## Path routes
+
+Published files are also addressable by asset path, so a site can build URLs without
+knowing IDs: `/{locale}/{key}/{label}{extension}`, for a configured locale of the
+default region. The label is the file's source label and the extension comes from the
+published file (`.webp`, `.png`, `.json`, `.m4a`, `.mp4`, …), for example:
+
+```text
+GET /zh-Hans/Character/Image/11/character_face_icon/character_face_icon.webp
+GET /en/Adv/Episode/adv_script_mygo_001_1_01/adv_script_mygo_001_1_01-Text/adv_script_mygo_001_1_01-Text.json
+GET /ja/Cri/Sound/A_Abracadabra/A_Abracadabra.m4a
+GET /ja/Cri/Sound/adv_voice_mygo_001_1_01/          (listing)
+```
+
+A path resolves against the scope's current snapshot first, then older retained
+snapshots, and uses the first one with a published export of the key. A catalog
+refresh therefore does not hide files until the new snapshot is exported. Because a
+path can move to newer content, responses carry `Cache-Control: public,max-age=600`
+and the content ETag; `/files/{id}` stays immutable. Range and conditional requests
+work as for `/files/{id}`.
+
+The listing returns `{locale,key,snapshot,files}`; each file has `path`, `file`
+(`/files/{id}`), `label`, `media_type`, `bytes`, `sha256` and `metadata`. When files
+with different content share a label and extension, their `path` is null and the
+path itself answers 409; use their `file` URLs. Labels containing `/` have no path.
+Unknown locales, keys without a published export and unknown names are 404. Path
+routes never start downloads or exports.
 
 ## Selection and pagination
 
