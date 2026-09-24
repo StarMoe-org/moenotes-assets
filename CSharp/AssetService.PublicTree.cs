@@ -9,7 +9,8 @@ namespace MoenotesAssets;
 public sealed partial class AssetService
 {
     private const string TreeVersionSetting = "public_tree_version";
-    private const int TreeVersion = 1;
+    // Bump to rebuild existing trees on the next start (2: names shared by different content get __{seq} aliases).
+    private const int TreeVersion = 2;
     /// <summary>Which snapshot's export owns a key's directory, and the names it linked (stored as .export.json there).</summary>
     public sealed record PathState(string Snapshot, long Created, string[] Names);
     private readonly object treeGate = new();
@@ -40,7 +41,7 @@ public sealed partial class AssetService
             var segments = manifest.Key.Split('/');
             if (!segments.All(SafeSegment)) return true;
             var directory = Path.Combine([PublicRoot, snapshot.Locale, .. segments]);
-            var files = PathFiles(manifest).Where(p => p.Value != null).ToDictionary(p => p.Key, p => p.Value!, StringComparer.Ordinal);
+            var files = PathFiles(manifest);
             lock (treeGate)
             {
                 // The owner is recorded beside the files, in a dot file the static provider never serves, so the

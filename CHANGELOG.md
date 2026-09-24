@@ -92,5 +92,8 @@ changes require explicit release notes; a frozen stable API is not claimed.
   owner in `.export.json`) and the static file middleware serves it. Existing exports
   are backfilled in the background on first start; until then misses resolve from
   SQLite. Locally, 304s went from 9,341 to 48,838 requests/s and 200s from 3,923 to
-  5,341; path 404s no longer touch SQLite. Names shared by different content are now
-  404 instead of 409.
+  5,341; path 404s no longer touch SQLite.
+- Give every file a path: when files with different content share a label, the first
+  in export order owns `{label}{ext}` and the others are `{label}__{seq}{ext}`
+  (previously neither had a path, which hid textures such as item icons and band
+  logos). The tree version is bumped so existing trees are rebuilt on start.

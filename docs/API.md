@@ -74,12 +74,16 @@ export never overwrites a newer one.
 
 Path responses carry `Cache-Control: public,max-age=600`, an ETag and Range/conditional
 support from the static file middleware; `/files/{id}` stays immutable. Unknown
-locales, keys without a published export, unknown names and names shared by files with
-different content (not linked) are 404 with `Cache-Control: public,max-age=60`. Path
-routes never start downloads or exports.
+locales, keys without a published export and unknown names are 404 with
+`Cache-Control: public,max-age=60`. Path routes never start downloads or exports.
+
+A texture and a sprite cut from it can share a label. The first file in export order
+owns `{label}{extension}`; a later file with different content is
+`{label}__{seq}{extension}`, after its published name (`item_icon_star__00003.webp`);
+a later identical file shares the first name. Every file therefore has a path.
 
 `GET /{locale}/{key}/` returns `{locale,key,snapshot,files}` from SQLite (cached); each
-file has `path` (null when not linked), `file` (`/files/{id}`), `label`, `media_type`,
+file has `path` (null only for labels that cannot be a file name), `file` (`/files/{id}`), `label`, `media_type`,
 `bytes`, `sha256` and `metadata`.
 
 On first start after upgrading, and whenever a link fails, the service backfills the

@@ -111,7 +111,7 @@ public static class Api
             {
                 var slash = rest.LastIndexOf('/');
                 var resolved = !service.PublicTreeReady && slash > 0 ? service.ResolvePath(locale, rest[..slash]) : null;
-                result = resolved != null && resolved.Files.TryGetValue(rest[(slash + 1)..], out var file) && file != null
+                result = resolved != null && resolved.Files.TryGetValue(rest[(slash + 1)..], out var file)
                     ? ServeFile(context, file.Id, "public,max-age=600") : NotFound(context);
             }
             await result.ExecuteAsync(context);

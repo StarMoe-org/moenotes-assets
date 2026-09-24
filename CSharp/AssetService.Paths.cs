@@ -6,8 +6,8 @@ public sealed partial class AssetService
 {
     public sealed record PathEntry(string? Path, string File, string Label, string MediaType, long Bytes, string Sha256, object? Metadata);
     public sealed record PathListing(string Locale, string Key, string Snapshot, PathEntry[] Files);
-    /// <summary>A key's newest published export: files by path name (null when ambiguous) and its listing.</summary>
-    public sealed record PathResolution(Manifest Manifest, IReadOnlyDictionary<string, PublishedFile?> Files, PathListing Listing);
+    /// <summary>A key's newest published export: files by path name and its listing.</summary>
+    public sealed record PathResolution(Manifest Manifest, IReadOnlyDictionary<string, PublishedFile> Files, PathListing Listing);
     // Resolutions (including misses) and scope snapshot lists carry the store versions they were read at and are
     // checked on every hit, so a publish or catalog refresh shows immediately without explicit removal.
     private sealed record Stamped<T>(T Value, long Generation, long Version);
@@ -61,23 +61,39 @@ public sealed partial class AssetService
     /// <summary>A file's name under its key: source label plus the published extension, or null when it cannot be a path segment.</summary>
     public static string? PathName(PublishedFile file) => file.Label + Path.GetExtension(file.Name) is var name && SafeSegment(name) ? name : null;
 
-    /// <summary>Files by path name; a name shared by files with different content maps to null (ambiguous).</summary>
-    public static IReadOnlyDictionary<string, PublishedFile?> PathFiles(Manifest manifest)
+    /// <summary>
+    /// Every file's name under its key. A texture and a sprite cut from it can share a label: the first in export
+    /// order owns `{label}{ext}` (as the old bucket and index chose), a later file with different content is
+    /// `{label}__{seq}{ext}` after its published name (00003), and a later identical file shares the first name.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> PathNamesById(Manifest manifest)
     {
-        var files = new Dictionary<string, PublishedFile?>(StringComparer.Ordinal);
+        var owners = new Dictionary<string, PublishedFile>(StringComparer.Ordinal); var names = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var file in manifest.Files)
-            if (PathName(file) is { } name)
-                files[name] = !files.TryGetValue(name, out var seen) ? file : seen != null && seen.Sha256 == file.Sha256 ? seen : null;
+        {
+            if (PathName(file) is not { } name) continue;
+            if (owners.TryGetValue(name, out var owner) && owner.Sha256 != file.Sha256)
+                name = file.Label + "__" + Path.GetFileNameWithoutExtension(file.Name) + Path.GetExtension(file.Name);
+            if (!SafeSegment(name) || (owners.TryGetValue(name, out owner) && owner.Sha256 != file.Sha256)) continue;
+            owners.TryAdd(name, file); names[file.Id] = name;
+        }
+        return names;
+    }
+
+    /// <summary>Files by path name (see PathNamesById); identical duplicates resolve to the first.</summary>
+    public static IReadOnlyDictionary<string, PublishedFile> PathFiles(Manifest manifest)
+    {
+        var names = PathNamesById(manifest); var files = new Dictionary<string, PublishedFile>(StringComparer.Ordinal);
+        foreach (var file in manifest.Files) if (names.TryGetValue(file.Id, out var name)) files.TryAdd(name, file);
         return files;
     }
 
     public static PathListing Listing(string locale, Manifest manifest)
     {
-        var files = PathFiles(manifest); var addressable = manifest.Key.Split('/').All(SafeSegment);
+        var names = PathNamesById(manifest); var addressable = manifest.Key.Split('/').All(SafeSegment);
         return new(locale, manifest.Key, manifest.Snapshot, manifest.Files.Select(file =>
         {
-            var name = PathName(file);
-            var path = addressable && name != null && files[name] != null ? "/" + string.Join('/', new[] { locale }.Concat(manifest.Key.Split('/')).Append(name).Select(Uri.EscapeDataString)) : null;
+            var path = addressable && names.TryGetValue(file.Id, out var name) ? "/" + string.Join('/', new[] { locale }.Concat(manifest.Key.Split('/')).Append(name).Select(Uri.EscapeDataString)) : null;
             return new PathEntry(path, "/files/" + file.Id, file.Label, file.MediaType, file.Bytes, file.Sha256, file.Metadata);
         }).ToArray());
     }
