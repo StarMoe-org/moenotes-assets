@@ -32,6 +32,7 @@ allow_loopback_http = false
 
 # Optional external browser frontend (exact origins, no trailing slash).
 # cors_origins = ["http://localhost:3000"]
+# Use ["*"] to allow any origin (without cross-origin credentials).
 # locales = ["zh-Hans", "zh-Hant", "en", "ko", "ja"]
 
 # Optional region array; top-level region must identify a configured entry.

@@ -63,7 +63,7 @@ public sealed record Config
             foreach (var region in Regions) ForRegion(region.Id).Validate();
         }
         foreach (var origin in CorsOrigins)
-            Require(Uri.TryCreate(origin, UriKind.Absolute, out var u) && u.Scheme is "http" or "https" && u.UserInfo.Length == 0 && u.AbsolutePath == "/" && u.Query.Length == 0 && u.Fragment.Length == 0 && !origin.EndsWith('/'), "CORS entries must be exact origins without trailing slash");
+            Require(origin == "*" || (Uri.TryCreate(origin, UriKind.Absolute, out var u) && u.Scheme is "http" or "https" && u.UserInfo.Length == 0 && u.AbsolutePath == "/" && u.Query.Length == 0 && u.Fragment.Length == 0 && !origin.EndsWith('/')), "CORS entries must be '*' or exact origins without trailing slash");
         foreach (var language in Locales) Require(language.Length <= 64 && language.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-'), "Invalid locale");
     }
     public Config ForRegion(string? region = null, string? locale = null, string? version = null)

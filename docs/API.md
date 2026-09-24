@@ -2,7 +2,8 @@
 
 Base URL: `http://127.0.0.1:8091`. JSON uses snake_case. No `/v1` prefix,
 HTTP authentication or built-in browser UI; `/` returns 404. An external frontend
-can use `cors_origins = ["http://localhost:3000"]` in TOML (exact origins).
+can use `cors_origins = ["http://localhost:3000"]` in TOML (exact origins), or
+`cors_origins = ["*"]` to allow any origin without cross-origin credentials.
 
 | Method | Path | Result |
 |---|---|---|
