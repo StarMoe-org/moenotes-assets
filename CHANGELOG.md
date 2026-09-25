@@ -97,3 +97,7 @@ changes require explicit release notes; a frozen stable API is not claimed.
   in export order owns `{label}{ext}` and the others are `{label}__{seq}{ext}`
   (previously neither had a path, which hid textures such as item icons and band
   logos). The tree version is bumped so existing trees are rebuilt on start.
+- Give movies a path: USM exports label their MP4 with the full asset key, which
+  contains `/` and so had no path (only `/files/{id}` worked). A label made of safe
+  segments now contributes its last one (`Cri/Video/adv/x/x/x.mp4`); labels with an
+  unsafe segment still have none. The tree version is bumped to link existing movies.

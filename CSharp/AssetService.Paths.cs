@@ -59,7 +59,13 @@ public sealed partial class AssetService
     }
 
     /// <summary>A file's name under its key: source label plus the published extension, or null when it cannot be a path segment.</summary>
-    public static string? PathName(PublishedFile file) => file.Label + Path.GetExtension(file.Name) is var name && SafeSegment(name) ? name : null;
+    public static string? PathName(PublishedFile file) => PathLabel(file.Label) is { } label && label + Path.GetExtension(file.Name) is var name && SafeSegment(name) ? name : null;
+
+    /// <summary>
+    /// The label a path name starts with. Movie labels are their full asset key (Cri/Video/adv/x/x), so a label made of
+    /// safe segments contributes its last one; a label with an unsafe segment (.., empty) has no path.
+    /// </summary>
+    private static string? PathLabel(string label) => label.Split('/') is var segments && segments.All(SafeSegment) ? segments[^1] : null;
 
     /// <summary>
     /// Every file's name under its key. A texture and a sprite cut from it can share a label: the first in export
@@ -73,7 +79,7 @@ public sealed partial class AssetService
         {
             if (PathName(file) is not { } name) continue;
             if (owners.TryGetValue(name, out var owner) && owner.Sha256 != file.Sha256)
-                name = file.Label + "__" + Path.GetFileNameWithoutExtension(file.Name) + Path.GetExtension(file.Name);
+                name = PathLabel(file.Label) + "__" + Path.GetFileNameWithoutExtension(file.Name) + Path.GetExtension(file.Name);
             if (!SafeSegment(name) || (owners.TryGetValue(name, out owner) && owner.Sha256 != file.Sha256)) continue;
             owners.TryAdd(name, file); names[file.Id] = name;
         }

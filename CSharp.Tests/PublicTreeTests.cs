@@ -33,6 +33,9 @@ public class PublicTreeTests
         service.MaterializePaths(Export("e-newest", newest, "Cri/Sound/Song", File("f-renamed", "Renamed", "renamed")));
         Assert.False(System.IO.File.Exists(Tree("Cri", "Sound", "Song", "Song.m4a")));
         Assert.Equal("renamed", System.IO.File.ReadAllText(Tree("Cri", "Sound", "Song", "Renamed.m4a")));
+        // Movie labels are their asset key; the file is named after the key's last segment.
+        service.MaterializePaths(Export("e-movie", newest, "Cri/Video/adv/clip/clip", File("f-movie", "Cri/Video/adv/clip/clip", "movie")));
+        Assert.Equal("movie", System.IO.File.ReadAllText(Tree("Cri", "Video", "adv", "clip", "clip", "clip.m4a")));
         // Unsafe keys, unsafe labels and other regions are not materialized.
         service.MaterializePaths(Export("e-escape", newest, "../escape", File("f-escape", "x", "x")));
         service.MaterializePaths(Export("e-label", newest, "Cri/Sound/Label", File("f-label", "../x", "x")));

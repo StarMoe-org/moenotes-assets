@@ -9,8 +9,9 @@ namespace MoenotesAssets;
 public sealed partial class AssetService
 {
     private const string TreeVersionSetting = "public_tree_version";
-    // Bump to rebuild existing trees on the next start (2: names shared by different content get __{seq} aliases).
-    private const int TreeVersion = 2;
+    // Bump to rebuild existing trees on the next start (2: names shared by different content get __{seq} aliases;
+    // 3: movies, whose labels are their asset key, are named after the key's last segment).
+    private const int TreeVersion = 3;
     /// <summary>Which snapshot's export owns a key's directory, and the names it linked (stored as .export.json there).</summary>
     public sealed record PathState(string Snapshot, long Created, string[] Names);
     private readonly object treeGate = new();

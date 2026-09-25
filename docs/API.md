@@ -53,12 +53,14 @@ key from a trusted backend/admin client over HTTPS, not public frontend code.
 Published files are also addressable by asset path, so a site can build URLs without
 knowing IDs: `/{locale}/{key}/{label}{extension}`, for a configured locale of the
 default region. The label is the file's source label and the extension comes from the
-published file (`.webp`, `.png`, `.json`, `.m4a`, `.mp4`, …), for example:
+published file (`.webp`, `.png`, `.json`, `.m4a`, `.mp4`, …). Movie labels are their
+full asset key, so a label made of path segments contributes its last one, for example:
 
 ```text
 GET /zh-Hans/Character/Image/11/character_face_icon/character_face_icon.webp
 GET /en/Adv/Episode/adv_script_mygo_001_1_01/adv_script_mygo_001_1_01-Text/adv_script_mygo_001_1_01-Text.json
 GET /ja/Cri/Sound/A_Abracadabra/A_Abracadabra.m4a
+GET /ja/Cri/Video/adv/adv_movie_hekiten_mygo_07/adv_movie_hekiten_mygo_07/adv_movie_hekiten_mygo_07.mp4
 GET /ja/Cri/Sound/adv_voice_mygo_001_1_01/          (listing)
 ```
 
@@ -83,7 +85,7 @@ owns `{label}{extension}`; a later file with different content is
 a later identical file shares the first name. Every file therefore has a path.
 
 `GET /{locale}/{key}/` returns `{locale,key,snapshot,files}` from SQLite (cached); each
-file has `path` (null only for labels that cannot be a file name), `file` (`/files/{id}`), `label`, `media_type`,
+file has `path` (null only for labels with a segment that cannot be a file name), `file` (`/files/{id}`), `label`, `media_type`,
 `bytes`, `sha256` and `metadata`.
 
 On first start after upgrading, and whenever a link fails, the service backfills the
