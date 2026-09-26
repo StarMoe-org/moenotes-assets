@@ -242,6 +242,10 @@ Each configured region maps to the entry `metadata_region` (default: its ID; `""
 `resource_version` must be a safe path segment (letters, digits, `.`, `_`, `-`); every
 `|`-separated cdnRoot must pass the `cdn_root` rules (HTTPS, no user info, query or fragment).
 
+`version_url` must be HTTPS, except for a loopback host with `allow_loopback_http`, or any host with
+`allow_insecure_version_url = true` — that flag is for a metadata service reachable only inside a cluster
+network. It does not relax the CDN roots the document names, which are still HTTPS-only.
+
 A region gets a new release, `{region}:{resource_version}`, when its entry's version or CDN
 roots differ from its latest release, or that release failed; `force=true` also re-runs a
 completed one. The release is a normal FIFO batch (`GET /tasks/batches/{id}`: refresh then

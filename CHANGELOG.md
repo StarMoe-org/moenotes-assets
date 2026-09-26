@@ -124,4 +124,5 @@ changes require explicit release notes; a frozen stable API is not claimed.
   mirrors tried in order; the snapshot records the root that answered); later manual refreshes follow those roots
   instead of `cdn_root`. When the batch ends, `/versions/` is rewritten: `current_version.json`, `index.json`,
   `{region}/{resource_version}/release.json` and `diff/{locale}.json`, which compares published files by content
-  against the previous release (added, changed, removed, failed).
+  against the previous release (added, changed, removed, failed). `allow_insecure_version_url` permits a plain HTTP
+  `version_url` for a metadata service reachable only inside a cluster network; CDN roots stay HTTPS-only.

@@ -44,6 +44,9 @@ public sealed record Config
     public string VersionUrl { get; init; } = "";
     public int VersionPollSecs { get; init; } = 600;
     public string MetadataRegion { get; init; } = "";
+    // Plain HTTP for version_url only (a metadata service reachable solely inside a cluster network, e.g.
+    // http://metadata.namespace.svc.cluster.local/current_version.json). CDN roots in its document are still HTTPS.
+    public bool AllowInsecureVersionUrl { get; init; }
     public static Config Load(string path)
     {
         var table = Toml.ToModel(File.ReadAllText(path));
@@ -98,7 +101,9 @@ public sealed record Config
     public Uri VersionUri()
     {
         Require(Uri.TryCreate(VersionUrl, UriKind.Absolute, out var uri), "Invalid version_url");
-        Require(uri!.UserInfo.Length == 0 && uri.Host.Length > 0 && (uri.Scheme == "https" || (AllowLoopbackHttp && uri.Scheme == "http" && uri.Host is "127.0.0.1" or "[::1]")), "HTTPS version_url required");
+        var loopback = AllowLoopbackHttp && uri!.Host is "127.0.0.1" or "[::1]";
+        Require(uri!.UserInfo.Length == 0 && uri.Host.Length > 0 && (uri.Scheme == "https" || (uri.Scheme == "http" && (loopback || AllowInsecureVersionUrl))),
+            "HTTPS version_url required (allow_insecure_version_url permits plain HTTP for a cluster-internal metadata service)");
         return uri;
     }
     /// <summary>The region's entry name in the version_url document, or null when the region is not tracked.</summary>

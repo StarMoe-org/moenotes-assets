@@ -45,7 +45,11 @@ allow_loopback_http = false
 # version_poll_secs (0: only POST /versions/check or the CLI `update`). A region whose resource_version or cdnRoot
 # changed is refreshed from that cdnRoot and exported in every language; /versions/ then publishes the release and diffs.
 # version_url = "https://metadata.example.invalid/current_version.json"
-# version_poll_secs = 600
+# version_poll_secs = 60
+# version_url may use plain HTTP only with this flag: the metadata service is reachable solely inside your cluster
+# network (e.g. http://metadata.your-namespace.svc.cluster.local/current_version.json). CDN roots in its document are
+# still required to be HTTPS, so a plain-HTTP document cannot redirect downloads off TLS.
+# allow_insecure_version_url = true
 
 # Optional region array; top-level region must identify a configured entry.
 # When omitted, the top-level cdn_root defines the only region.

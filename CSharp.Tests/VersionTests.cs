@@ -107,6 +107,18 @@ public class VersionTests
     }
 
     [Fact]
+    public void PlainHttpVersionUrlNeedsItsOwnOptIn()
+    {
+        var cluster = new Config { CdnRoot = "https://cdn.example.invalid/prod", VersionUrl = "http://metadata.moenotes.svc.cluster.local/current_version.json" };
+        Assert.Contains("allow_insecure_version_url", Assert.Throws<InvalidDataException>(cluster.Validate).Message);
+        (cluster with { AllowInsecureVersionUrl = true }).Validate();
+        // The flag covers only the document's URL, not the CDN roots it names.
+        Assert.Throws<InvalidDataException>(() => (cluster with { AllowInsecureVersionUrl = true, CdnRoot = "http://cdn.example.invalid/prod" }).Validate());
+        Assert.Throws<InvalidDataException>(() => (cluster with { AllowInsecureVersionUrl = true, VersionPollSecs = 30 }).Validate());
+        (cluster with { AllowInsecureVersionUrl = true, VersionPollSecs = 60 }).Validate();
+    }
+
+    [Fact]
     public void DiffComparesPublishedFilesByContent()
     {
         static Manifest M(string id, params (string Label, string Sha)[] files) =>
