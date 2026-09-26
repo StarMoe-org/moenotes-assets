@@ -10,9 +10,10 @@ internal static class CriFixture
         var tableName = Str("fixture"); using var schema = new MemoryStream(); using var row = new MemoryStream(); using var data = new MemoryStream();
         foreach (var (name, value) in columns)
         {
-            var type = value switch { string => 10, byte[] => 11, _ => 4 }; schema.WriteByte((byte)(0x50 | type)); Fixture.Be(schema, Str(name));
+            var type = value switch { string => 10, byte[] => 11, float => 8, _ => 4 }; schema.WriteByte((byte)(0x50 | type)); Fixture.Be(schema, Str(name));
             if (value is string text) Fixture.Be(row, Str(text));
             else if (value is byte[] bytes) { Fixture.Be(row, (uint)data.Position); Fixture.Be(row, (uint)bytes.Length); data.Write(bytes); }
+            else if (value is float single) Fixture.Be(row, BitConverter.SingleToUInt32Bits(single));
             else Fixture.Be(row, Convert.ToUInt32(value));
         }
         using var output = new MemoryStream(); output.Write("@UTF"u8); Fixture.Be(output, (uint)(24 + schema.Length + row.Length + strings.Length + data.Length));

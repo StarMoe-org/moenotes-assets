@@ -1,9 +1,18 @@
 using MoenotesAssets;
-const string usage = "Usage: moenotes-assets serve CONFIG.toml | scan CONFIG.toml | refresh CONFIG.toml | list CONFIG.toml [PREFIX] | export CONFIG.toml KEY... | export CONFIG.toml --prefix PREFIX | --version";
+const string usage = "Usage: moenotes-assets serve CONFIG.toml | scan CONFIG.toml | refresh CONFIG.toml | list CONFIG.toml [PREFIX] | export CONFIG.toml KEY... | export CONFIG.toml --prefix PREFIX | chart-site CONFIG.toml [--force] [MUSIC_ID...] | chart-base NNNOTES_SITE OUT.zip SOURCE | --version";
 try
 {
     if (args.Length == 1 && args[0] is "--help" or "-h") { Console.WriteLine(usage); return 0; }
     if (args.Length == 1 && args[0] == "--version") { Console.WriteLine("moenotes-assets 0.2.0-csharp (.NET 10)"); return 0; }
+    if (args.Length == 4 && args[0] == "chart-base")
+    {
+        // Packs an nnnotes `web` site as a static base package (docs/CHART_SITE.md); prints its facts and sha256.
+        var info = ChartSite.PackBase(args[1], args[2], args[3]);
+        await using var zip = File.OpenRead(args[2]);
+        info["sha256"] = Convert.ToHexStringLower(await System.Security.Cryptography.SHA256.HashDataAsync(zip));
+        info["bytes"] = zip.Length;
+        Console.WriteLine(info.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true })); return 0;
+    }
     if (args.Length == 2 && args[0] == "worker")
     {
         WorkerResult result;
@@ -19,7 +28,7 @@ try
         catch (Exception e) { result = new([], e.Message); }
         await File.WriteAllTextAsync(args[1] + ".result.json", Json.Write(result)); return 0;
     }
-    if (args.Length < 2 || args[0] is not ("serve" or "scan" or "refresh" or "list" or "export"))
+    if (args.Length < 2 || args[0] is not ("serve" or "scan" or "refresh" or "list" or "export" or "chart-site"))
     {
         Console.Error.WriteLine(usage); return 2;
     }
@@ -39,6 +48,13 @@ try
     TaskInfo task;
     if (args[0] == "refresh") task = service.StartRefresh();
     else if (args[0] == "scan") task = service.StartBundleScan();
+    else if (args[0] == "chart-site")
+    {
+        var options = args[2..]; var force = options.Contains("--force");
+        var music = options.Where(a => a != "--force").Select(a => int.TryParse(a, out var id) && id > 0 ? id : throw new InvalidDataException($"Invalid music id {a}")).ToArray();
+        await service.CheckMedia(cancellation.Token);
+        task = service.StartChartSite(new(music.Length > 0 ? music : null, force));
+    }
     else
     {
         if (args.Length < 3) throw new InvalidDataException("Specify one or more keys or --prefix PREFIX");

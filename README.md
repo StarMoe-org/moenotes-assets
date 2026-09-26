@@ -67,6 +67,14 @@ curl http://127.0.0.1:8091/zh-Hant/Live/MusicScore/0007/0007_03/   # files by as
 POST requests return `202` and a task ID. GET never starts downloads.
 See [API](docs/API.md) for selection, cancellation, manifests and file ranges.
 
+## Chart site
+
+`chart-site CONFIG.toml [--force] [MUSIC_ID...]` (or `POST /chart-site/build`) publishes an
+[ournotes-player](https://github.com/StarMoe-org/ournotes-player) chart site at `/chart-site/`: the static stage,
+notes and effects of a static base package (downloaded from `chart_base_url`, checked against `chart_base_sha256`),
+and for every song its own converted chart, BGM, sound definition and jacket from this service's exports.
+`chart-base NNNOTES_SITE OUT.zip SOURCE` packs an nnnotes `web` site as such a package. See [Chart site](docs/CHART_SITE.md).
+
 ## Export formats
 
 | Input | Output |

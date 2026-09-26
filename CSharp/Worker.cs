@@ -43,6 +43,7 @@ public static class Worker
     {
         job.Config.Validate(); Require(job.Inputs.Length > 0 && job.Inputs.Select(i => i.Location.Id).Distinct().Count() == job.Inputs.Length, "Invalid worker inputs");
         Directory.CreateDirectory(job.Output); var output = new Output(job);
+        if (job.Mode == "acb") return CueSheet(job, output);
         if (job.Target.Provider == Catalog.Cri || (job.Target.ResourceType.StartsWith("CriWare.", StringComparison.Ordinal) && job.Inputs.Any(i => i.Location.Provider == Catalog.Cri)))
         {
             var inputs = job.Inputs.Where(i => i.Location.Provider == Catalog.Cri).ToArray();
@@ -52,6 +53,24 @@ public static class Worker
         else Unity(job, output);
         foreach (var path in output.EmbeddedMedia) await CriMedia.Export(path, output, token);
         Require(output.Files.Count > 0, "No supported outputs"); return output.Files.ToArray();
+    }
+    // The ACB bytes of a cue sheet: a raw @UTF dependency, or the one ACB a split/embedded CRI asset holds.
+    private static Artifact[] CueSheet(WorkerJob job, Output output)
+    {
+        var raw = job.Inputs.Where(i => i.Location.Provider == Catalog.Cri).ToArray();
+        string source;
+        if (raw.Length > 0) { Require(raw.Length == 1, "Ambiguous CRI dependencies"); source = raw[0].Path; }
+        else
+        {
+            Unity(job, output);
+            Require(output.EmbeddedMedia.Count == 1 && output.Files.Count == 0, "Expected one embedded cue sheet");
+            source = output.EmbeddedMedia[0];
+        }
+        Require(new FileInfo(source).Length <= job.Config.InputBytes, "Cue sheet input budget");
+        var bytes = File.ReadAllBytes(source);
+        Require(bytes.AsSpan().StartsWith("@UTF"u8), "Not an ACB cue sheet");
+        output.Bytes(bytes, "acb", job.Target.Key.Split('/')[^1], "application/octet-stream");
+        return output.Files.ToArray();
     }
     private static void Unity(WorkerJob job, Output output)
     {

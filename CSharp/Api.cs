@@ -77,6 +77,19 @@ public static class Api
                 await context.Response.WriteAsJsonAsync(new { error = status == 500 ? "Internal service error" : exception.Message });
             }
         });
+        // Chart site (AssetService.StartChartSite): content-addressed assets never change under their name; manifests
+        // and charts.json change with each build.
+        var chartTypes = new FileExtensionContentTypeProvider();
+        chartTypes.Mappings[".glsl"] = "text/plain; charset=utf-8"; chartTypes.Mappings[".flac"] = "audio/flac"; chartTypes.Mappings[".m4a"] = "audio/mp4";
+        Directory.CreateDirectory(service.ChartSiteRoot);
+        app.UseStaticFiles(new StaticFileOptions
+        {
+            RequestPath = "/chart-site",
+            FileProvider = new PhysicalFileProvider(service.ChartSiteRoot), // excludes dot-prefixed temporary files
+            ContentTypeProvider = chartTypes,
+            OnPrepareResponse = file => file.Context.Response.Headers.CacheControl = file.Context.Request.Path.StartsWithSegments("/chart-site/assets", StringComparison.Ordinal)
+                ? "public,max-age=31536000,immutable" : "public,max-age=60",
+        });
         // Path routes: public/{locale}/{key}/{label}{ext} is a tree of hard links written at publication
         // (AssetService.MaterializePaths), served as static files without SQLite. Paths follow the newest published
         // export, so they get a short cache; /files/{id} stays immutable.
@@ -132,6 +145,7 @@ public static class Api
         app.MapGet("/assets", (string? snapshot, string? region, string? locale, string? bundle, string? prefix, string? resource_type, int? offset, int? limit) =>
             service.ListAssets(snapshot, prefix, resource_type, offset ?? 0, limit ?? 100, region, locale, bundle));
         app.MapPost("/exports", (ExportRequest request) => Accepted(service.StartExport(request)));
+        app.MapPost("/chart-site/build", (ChartSiteRequest? request) => Accepted(service.StartChartSite(request ?? new())));
         app.MapPost("/tasks/batches", (BatchRequest request) =>
         {
             var batch = service.StartBatch(request);

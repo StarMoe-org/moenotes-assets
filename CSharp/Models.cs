@@ -26,7 +26,8 @@ public sealed record PublishedFile(string Id, string Name, string Label, string 
 public sealed record Source(Location Location, string DownloadSha256, string? PlainSha256 = null);
 public sealed record Manifest(string Id, string Snapshot, string Key, string Profile, Source[] Sources, PublishedFile[] Files, string? Region = null, string? ReusedFrom = null);
 public sealed record WorkerInput(Location Location, string Path);
-public sealed record WorkerJob(Config Config, Location Target, WorkerInput[] Inputs, string Output, int ParentPid = 0);
+// Mode "acb": the cue sheet's ACB bytes instead of its media (chart site sound definitions).
+public sealed record WorkerJob(Config Config, Location Target, WorkerInput[] Inputs, string Output, int ParentPid = 0, string? Mode = null);
 public sealed record WorkerResult(Artifact[] Files, string? Error, bool Unsupported = false);
 public sealed class ApiException(int status, string message) : Exception(message) { public int Status { get; } = status; }
 // A known unsupported feature found only after download; exports record it as skipped, not failed.

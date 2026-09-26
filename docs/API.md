@@ -229,6 +229,14 @@ logical_output_bytes, referenced_output_bytes, deduplicated_output_bytes,
 reserved_temp_bytes. SQLite main bytes exclude WAL/SHM; output counters exclude
 catalogs and metadata. Temporary bytes are reservations, not a disk measurement.
 
+## Chart site
+
+`POST /chart-site/build` (administrative) takes optional `music` (MasterLiveMusic ids), `force` (rebuild built,
+not base, charts), `snapshot`, `region`, `locale`, and returns a `chart_site` task with one result per chart id
+(`<musicId>_<difficulty>`). It needs `chart_base_url` (or `chart_base`) and `master_root`. The site is public and read-only under
+`/chart-site/` (`charts.json`, `charts/<id>.json`, `assets/<sha256>.<ext>`); assets are immutable, manifests and the
+index are cached for 60 seconds. See [Chart site](CHART_SITE.md).
+
 ## Sequential all-language queue
 
 Submit once to refresh and export every configured language in order:

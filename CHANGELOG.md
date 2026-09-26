@@ -20,6 +20,10 @@ changes require explicit release notes; a frozen stable API is not claimed.
 
 ## 0.2.0-csharp (unreleased)
 
+- Add the ournotes-player chart site (`chart-site`, `POST /chart-site/build`, static `/chart-site/`): a static base
+  package (`chart-base` packs an nnnotes `web` site; `chart_base_url` + `chart_base_sha256` download it once) plus
+  charts composed from the song's exports, with a port of the nnnotes chart converter (field-for-field equal on all
+  336 TW charts), ACB cue parsing and a worker mode that returns a cue sheet's ACB.
 - Reimplement the service and CLI in C# on .NET 10; default CI and container use .NET.
 - Redesign HTTP routes without the `/v1` prefix; CLI refresh/export wait for completion.
 - Add UnityFS/TextAsset/PNG/Sprite/atlas and embedded ACB/HCA/USM export in C#.

@@ -33,13 +33,24 @@ public sealed record Config
     public RegionSettings[] Regions { get; init; } = [];
     public string[] Locales { get; init; } = [];
     public string ClassData { get; init; } = "";
+    // Chart site: the static base, a package downloaded from chart_base_url (checked against chart_base_sha256) or a
+    // local chart_base directory (a package or an nnnotes `web` site), and the decoded MasterData root (<root>/<Table>.json).
+    public string ChartBaseUrl { get; init; } = "";
+    public string ChartBaseSha256 { get; init; } = "";
+    public string ChartBase { get; init; } = "";
+    public string MasterRoot { get; init; } = "";
     public static Config Load(string path)
     {
         var table = Toml.ToModel(File.ReadAllText(path));
         var config = JsonSerializer.Deserialize<Config>(JsonSerializer.Serialize(table), Json.Strict)
             ?? throw new InvalidDataException("Empty configuration");
         config.Validate();
-        return config with { DataDir = Path.GetFullPath(config.DataDir, Path.GetDirectoryName(Path.GetFullPath(path))!) };
+        var directory = Path.GetDirectoryName(Path.GetFullPath(path))!;
+        return config with
+        {
+            DataDir = Path.GetFullPath(config.DataDir, directory),
+            ChartBase = config.ChartBase.Length == 0 ? "" : Path.GetFullPath(config.ChartBase, directory),
+        };
     }
     public void Validate()
     {
@@ -65,6 +76,22 @@ public sealed record Config
         foreach (var origin in CorsOrigins)
             Require(origin == "*" || (Uri.TryCreate(origin, UriKind.Absolute, out var u) && u.Scheme is "http" or "https" && u.UserInfo.Length == 0 && u.AbsolutePath == "/" && u.Query.Length == 0 && u.Fragment.Length == 0 && !origin.EndsWith('/')), "CORS entries must be '*' or exact origins without trailing slash");
         foreach (var language in Locales) Require(language.Length <= 64 && language.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-'), "Invalid locale");
+        if (MasterRoot.Length > 0) _ = MasterUri();
+        if (ChartBaseUrl.Length > 0) _ = ChartBaseUri();
+        Require(ChartBaseUrl.Length == 0 || (ChartBaseSha256.Length == 64 && ChartBaseSha256.All(c => char.IsAsciiDigit(c) || c is >= 'a' and <= 'f')), "chart_base_url needs chart_base_sha256 (64 lowercase hex digits)");
+    }
+    public Uri ChartBaseUri()
+    {
+        Require(Uri.TryCreate(ChartBaseUrl, UriKind.Absolute, out var uri), "Invalid chart_base_url");
+        Require(uri!.UserInfo.Length == 0 && uri.Host.Length > 0 && (uri.Scheme == "https" || (AllowLoopbackHttp && uri.Scheme == "http" && uri.Host is "127.0.0.1" or "[::1]")), "HTTPS chart_base_url required");
+        return uri;
+    }
+    public Uri MasterUri()
+    {
+        Require(!MasterRoot.Any(c => "\\%?#".Contains(c)), "Invalid master_root");
+        Require(Uri.TryCreate(MasterRoot, UriKind.Absolute, out var uri), "Invalid master_root");
+        Require(uri!.UserInfo.Length == 0 && uri.Host.Length > 0 && (uri.Scheme == "https" || (AllowLoopbackHttp && uri.Scheme == "http" && uri.Host is "127.0.0.1" or "[::1]")), "HTTPS master_root required");
+        return uri;
     }
     public Config ForRegion(string? region = null, string? locale = null, string? version = null)
     {

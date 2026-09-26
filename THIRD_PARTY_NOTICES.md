@@ -16,6 +16,10 @@ Project code is MIT licensed. This does not relicense dependencies or game asset
 - Sprite geometry/layout handling was informed by AssetStudio's SpriteHelper,
   MIT, https://github.com/Perfare/AssetStudio. Its notice is
   `third_party/AssetStudio-LICENSE.txt`.
+- The chart site (`ChartScore`, `AcbCues`, `ChartSite`) ports nnnotes, MIT, copyright 2026 MetaMiku, emptysekai,
+  https://github.com/empty-sekai/nnnotes, commit `cc43e132875206d02d8665b19c06b27255ab0037`: its re-implementation
+  of the game's chart converter (`score.py`), ACB cue parsing (`liveaudio.acb_cues`) and site layout (`web.py`).
+  Its notice is `third_party/nnnotes-LICENSE.txt`.
 - Embedded `CSharp/Resources/classdata.tpk` is from UABEA `ReleaseFiles/classdata.tpk`,
   https://github.com/nesrak1/UABEA, commit
   `057e2f6ae67ebc94a38faca9f946f8577162fa99`.

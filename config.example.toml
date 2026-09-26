@@ -35,6 +35,12 @@ allow_loopback_http = false
 # Use ["*"] to allow any origin (without cross-origin credentials).
 # locales = ["zh-Hans", "zh-Hant", "en", "ko", "ja"]
 
+# Optional chart site (docs/CHART_SITE.md): the static base package, downloaded once and checked against its sha256
+# (or chart_base = a local package / nnnotes `web` directory), and decoded MasterData (<master_root>/<Table>.json).
+# chart_base_url = "https://github.com/StarMoe-org/ournotes-player/releases/download/static-base-tw-1.0.1/ournotes-static-base-tw-1.0.1.zip"
+# chart_base_sha256 = "ab6ee0103e32812be74e61735a5479b6403ceb624d96613d0e70dbd17b3cca7a"
+# master_root = "https://metadata.example.invalid/master"
+
 # Optional region array; top-level region must identify a configured entry.
 # When omitted, the top-level cdn_root defines the only region.
 # [[regions]]
