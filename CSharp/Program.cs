@@ -57,7 +57,7 @@ try
     Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancellation.Cancel(); };
     if (args[0] == "serve")
     {
-        await service.CheckMedia(cancellation.Token); var app = Api.Build(service); service.EnableAutomaticBundleScan(); service.EnableVersionPolling();
+        await service.CheckMedia(cancellation.Token); var app = Api.Build(service); service.EnableAutomaticBundleScan(); service.EnableVersionPolling(); service.EnableAutomaticModelSite();
         _ = service.BackfillPublicTree(); // background; path misses fall back to SQLite until it finishes
         _ = service.SweepStorage(); // background; orphaned blobs are never served
         await app.RunAsync(cancellation.Token); return 0;

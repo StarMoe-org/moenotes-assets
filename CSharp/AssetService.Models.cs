@@ -171,9 +171,20 @@ public sealed partial class AssetService
     private void RequestSites(string reason)
     {
         RequestChartSite(reason);
+        RequestModelSite(reason);
+    }
+
+    private void RequestModelSite(string reason)
+    {
         if (!ModelSiteConfigured || shutdown.IsCancellationRequested) return;
         Interlocked.Increment(ref pendingModelRequests); modelRequests.Writer.TryWrite(reason);
     }
+
+    /// <summary>
+    /// The server's first model build (serve): a new deployment builds the models its site lacks, and a restart after a
+    /// missed release catches up. Models whose inputs are unchanged are only compared, not downloaded.
+    /// </summary>
+    public void EnableAutomaticModelSite() => RequestModelSite("service start");
 
     private async Task RunAutomaticModelSite()
     {

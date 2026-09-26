@@ -94,7 +94,10 @@ and builds the models the site lacks and those whose inputs differ: a new costum
 
 With version tracking (`version_url`, see [API](API.md)) the model site follows the chart site: a build starts after a
 release of the default region whose default language succeeded or was partial, and after a master data change at an
-unchanged resource version (names). Requests that arrive during a build are coalesced into one more build. Logs show
+unchanged resource version (names). The server (`serve`) also requests one build when it starts, so a new deployment
+builds the models its site lacks without waiting for a release (a server without a catalog snapshot yet logs that the
+build could not start; the first release builds it). Requests that arrive during a build are coalesced into one more
+build. Logs show
 `[model-site] automatic build ID after …`; the CLI `update` waits for it and prints it as `model_site`.
 
 ## Verification
