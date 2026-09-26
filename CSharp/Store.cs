@@ -86,6 +86,21 @@ public sealed partial class Store : IDisposable
         var first = ids.FirstOrDefault(found.ContainsKey);
         return first == null ? null : Json.Read<Manifest>(found[first]);
     });
+    /// <summary>Published exports by ID (unknown IDs are absent), read in chunks on pooled readers.</summary>
+    public Dictionary<string, Manifest> Exports(IEnumerable<string> ids)
+    {
+        var found = new Dictionary<string, Manifest>(StringComparer.Ordinal);
+        foreach (var chunk in ids.Distinct(StringComparer.Ordinal).Chunk(500)) Read(c =>
+        {
+            using var command = c.CreateCommand();
+            command.CommandText = $"SELECT id, body FROM records WHERE kind='export' AND id IN ({string.Join(',', chunk.Select((_, i) => "$p" + i))})";
+            for (var i = 0; i < chunk.Length; i++) command.Parameters.AddWithValue("$p" + i, chunk[i]);
+            using var reader = command.ExecuteReader();
+            while (reader.Read()) found[reader.GetString(0)] = Json.Read<Manifest>(reader.GetFieldValue<byte[]>(1));
+            return 0;
+        });
+        return found;
+    }
     public T[] All<T>(string kind)
     {
         lock (gate)

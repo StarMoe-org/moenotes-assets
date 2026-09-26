@@ -35,7 +35,7 @@ public sealed partial class AssetService : IAsyncDisposable
         instance = new FileStream(Path.Combine(Config.DataDir, "instance.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         try
         {
-            foreach (var name in new[] { "tmp", "exports", "catalogs", "blobs", "public" })
+            foreach (var name in new[] { "tmp", "exports", "catalogs", "blobs", "public", "versions" })
             {
                 var path = Path.Combine(Config.DataDir, name);
                 Require(!Directory.Exists(path) || !File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint), "Symlink storage directory");
@@ -182,15 +182,33 @@ public sealed partial class AssetService : IAsyncDisposable
         if (running.TryGetValue(id, out var work)) await work.WaitAsync(token);
         return GetTask(id) ?? throw new ApiException(404, "Task not found");
     }
-    public TaskInfo StartRefresh(string? region = null, string? locale = null, string? version = null) => Start("catalog_refresh", null, 1, async (task, token) =>
+    /// <summary>
+    /// Refreshes one catalog from <paramref name="cdnRoots"/> ("a|b": mirrors tried in order), else from the region's
+    /// latest detected release (Versions.cs), else from the configured cdn_root. The snapshot records the root that answered.
+    /// </summary>
+    public TaskInfo StartRefresh(string? region = null, string? locale = null, string? version = null, string? cdnRoots = null) => Start("catalog_refresh", null, 1, async (task, token) =>
     {
         await refresh.WaitAsync(token);
         try
         {
             var selected = Config.ForRegion(region, locale, version);
-            var hash = new UTF8Encoding(false, true).GetString(await Fetch(selected.CatalogUri("hash"), 65536, token)).Trim();
-            Require(hash.Length <= 128, "Invalid catalog hash");
-            var bytes = await Fetch(selected.CatalogUri("bin"), 32 << 20, token);
+            var roots = (cdnRoots ?? ReleaseCdnRoot(selected.Region) ?? selected.CdnRoot).Split('|');
+            string hash; byte[] bytes;
+            for (var i = 0; ; i++)
+            {
+                selected = selected with { CdnRoot = roots[i] };
+                try
+                {
+                    hash = new UTF8Encoding(false, true).GetString(await Fetch(selected.CatalogUri("hash"), 65536, token)).Trim();
+                    Require(hash.Length <= 128, "Invalid catalog hash");
+                    bytes = await Fetch(selected.CatalogUri("bin"), 32 << 20, token);
+                    break;
+                }
+                catch (Exception e) when (i + 1 < roots.Length && !token.IsCancellationRequested)
+                {
+                    Console.Error.WriteLine($"[refresh] {selected.Region}/{selected.Locale} {roots[i]} failed ({e.Message}); trying {roots[i + 1]}");
+                }
+            }
 
             var digest = Crypto.Sha256(bytes);
             var id = Crypto.Identity(selected.Region, selected.Locale, selected.BiliVersion, selected.CdnRoot, digest);
@@ -457,7 +475,7 @@ public sealed partial class AssetService : IAsyncDisposable
     public Manifest? Manifest(string id) => Store.Find<Manifest>("export", id);
     public async ValueTask DisposeAsync()
     {
-        shutdown.Cancel(); await batchRunner; await storageSweep; await Task.WhenAll(running.Values.ToArray());
+        shutdown.Cancel(); await versionPolling; await batchRunner; await storageSweep; await Task.WhenAll(running.Values.ToArray());
         // Shared producers may still be unwinding after their last waiter cancelled.
         await exportWork.Drain(); await downloadWork.Drain();
         http.Dispose(); pathCache.Dispose(); Store.Dispose(); instance.Dispose(); shutdown.Dispose();

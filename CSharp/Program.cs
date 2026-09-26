@@ -1,5 +1,5 @@
 using MoenotesAssets;
-const string usage = "Usage: moenotes-assets serve CONFIG.toml | scan CONFIG.toml | refresh CONFIG.toml | list CONFIG.toml [PREFIX] | export CONFIG.toml KEY... | export CONFIG.toml --prefix PREFIX | chart-site CONFIG.toml [--force] [MUSIC_ID...] | chart-base NNNOTES_SITE OUT.zip SOURCE | --version";
+const string usage = "Usage: moenotes-assets serve CONFIG.toml | scan CONFIG.toml | refresh CONFIG.toml | update CONFIG.toml [--force] | list CONFIG.toml [PREFIX] | export CONFIG.toml KEY... | export CONFIG.toml --prefix PREFIX | chart-site CONFIG.toml [--force] [MUSIC_ID...] | chart-base NNNOTES_SITE OUT.zip SOURCE | --version";
 try
 {
     if (args.Length == 1 && args[0] is "--help" or "-h") { Console.WriteLine(usage); return 0; }
@@ -28,11 +28,12 @@ try
         catch (Exception e) { result = new([], e.Message); }
         await File.WriteAllTextAsync(args[1] + ".result.json", Json.Write(result)); return 0;
     }
-    if (args.Length < 2 || args[0] is not ("serve" or "scan" or "refresh" or "list" or "export" or "chart-site"))
+    if (args.Length < 2 || args[0] is not ("serve" or "scan" or "refresh" or "update" or "list" or "export" or "chart-site"))
     {
         Console.Error.WriteLine(usage); return 2;
     }
     if ((args[0] is "serve" or "scan" or "refresh" && args.Length != 2) || (args[0] == "list" && args.Length > 3) ||
+        (args[0] == "update" && !(args.Length == 2 || (args.Length == 3 && args[2] == "--force"))) ||
         (args[0] == "export" && (args.Length < 3 || (args[2] == "--prefix" && args.Length != 4))))
     { Console.Error.WriteLine(usage); return 2; }
     var config = Config.Load(args[1]); await using var service = new AssetService(config);
@@ -40,13 +41,25 @@ try
     Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancellation.Cancel(); };
     if (args[0] == "serve")
     {
-        await service.CheckMedia(cancellation.Token); var app = Api.Build(service); service.EnableAutomaticBundleScan();
+        await service.CheckMedia(cancellation.Token); var app = Api.Build(service); service.EnableAutomaticBundleScan(); service.EnableVersionPolling();
         _ = service.BackfillPublicTree(); // background; path misses fall back to SQLite until it finishes
         _ = service.SweepStorage(); // background; orphaned blobs are never served
         await app.RunAsync(cancellation.Token); return 0;
     }
     if (args[0] == "list") { Console.WriteLine(Json.Write(service.ListAssets(null, args.ElementAtOrDefault(2), null, 0, 1000))); return 0; }
     _ = service.SweepStorage();
+    if (args[0] == "update")
+    {
+        // Checks version_url once and waits for every queued release (refresh + export of all languages) to finish.
+        await service.CheckMedia(cancellation.Token);
+        var check = await service.CheckVersions(args.Length == 3, cancellation.Token);
+        var waiting = check.Regions.Where(r => r.Action is "queued" or "pending").ToArray();
+        using var stop = cancellation.Token.Register(() => { foreach (var r in waiting) service.CancelBatch(r.Batch!); });
+        var releases = new List<Release>();
+        foreach (var r in waiting) releases.Add(await service.WaitRelease(r.Release!));
+        Console.WriteLine(Json.Write(new { check, releases }));
+        return releases.Any(r => r.State == "cancelled") ? 130 : releases.All(r => r.State == "succeeded") && check.Regions.All(r => r.Error == null) ? 0 : 1;
+    }
     TaskInfo task;
     if (args[0] == "refresh") task = service.StartRefresh();
     else if (args[0] == "scan") task = service.StartBundleScan();

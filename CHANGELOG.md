@@ -117,3 +117,11 @@ changes require explicit release notes; a frozen stable API is not claimed.
   contains `/` and so had no path (only `/files/{id}` worked). A label made of safe
   segments now contributes its last one (`Cri/Video/adv/x/x/x.mp4`); labels with an
   unsafe segment still have none. The tree version is bumped to link existing movies.
+- Track resource versions: with `version_url` (the metadata service's `current_version.json`), the service checks
+  every `version_poll_secs` (default 600; `POST /versions/check`, CLI `update`) and queues a release for each tracked
+  region (`metadata_region`, default its id) whose `resource_version` or `server.cdnRoot` changed, or whose last
+  release failed. A release is one batch that refreshes and exports every language from the entry's CDN roots (`a|b`
+  mirrors tried in order; the snapshot records the root that answered); later manual refreshes follow those roots
+  instead of `cdn_root`. When the batch ends, `/versions/` is rewritten: `current_version.json`, `index.json`,
+  `{region}/{resource_version}/release.json` and `diff/{locale}.json`, which compares published files by content
+  against the previous release (added, changed, removed, failed).

@@ -39,6 +39,11 @@ public sealed record Config
     public string ChartBaseSha256 { get; init; } = "";
     public string ChartBase { get; init; } = "";
     public string MasterRoot { get; init; } = "";
+    // Version tracking (docs/API.md): the metadata service's current_version.json, checked every version_poll_secs
+    // (0: only on request). A region's entry is metadata_region (default: its id; "" in [[regions]] opts out).
+    public string VersionUrl { get; init; } = "";
+    public int VersionPollSecs { get; init; } = 600;
+    public string MetadataRegion { get; init; } = "";
     public static Config Load(string path)
     {
         var table = Toml.ToModel(File.ReadAllText(path));
@@ -78,6 +83,10 @@ public sealed record Config
         foreach (var language in Locales) Require(language.Length <= 64 && language.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-'), "Invalid locale");
         if (MasterRoot.Length > 0) _ = MasterUri();
         if (ChartBaseUrl.Length > 0) _ = ChartBaseUri();
+        if (VersionUrl.Length > 0) _ = VersionUri();
+        Require(VersionPollSecs == 0 || VersionPollSecs is >= 60 and <= 86400, "version_poll_secs must be 0 or 60 to 86400");
+        foreach (var name in Regions.Select(r => r.MetadataRegion).Append(MetadataRegion).OfType<string>())
+            Require(name.Length <= 64 && name.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-'), "Invalid metadata_region");
         Require(ChartBaseUrl.Length == 0 || (ChartBaseSha256.Length == 64 && ChartBaseSha256.All(c => char.IsAsciiDigit(c) || c is >= 'a' and <= 'f')), "chart_base_url needs chart_base_sha256 (64 lowercase hex digits)");
     }
     public Uri ChartBaseUri()
@@ -85,6 +94,19 @@ public sealed record Config
         Require(Uri.TryCreate(ChartBaseUrl, UriKind.Absolute, out var uri), "Invalid chart_base_url");
         Require(uri!.UserInfo.Length == 0 && uri.Host.Length > 0 && (uri.Scheme == "https" || (AllowLoopbackHttp && uri.Scheme == "http" && uri.Host is "127.0.0.1" or "[::1]")), "HTTPS chart_base_url required");
         return uri;
+    }
+    public Uri VersionUri()
+    {
+        Require(Uri.TryCreate(VersionUrl, UriKind.Absolute, out var uri), "Invalid version_url");
+        Require(uri!.UserInfo.Length == 0 && uri.Host.Length > 0 && (uri.Scheme == "https" || (AllowLoopbackHttp && uri.Scheme == "http" && uri.Host is "127.0.0.1" or "[::1]")), "HTTPS version_url required");
+        return uri;
+    }
+    /// <summary>The region's entry name in the version_url document, or null when the region is not tracked.</summary>
+    public string? MetadataRegionFor(string region)
+    {
+        var settings = Regions.FirstOrDefault(r => r.Id == region);
+        var name = settings != null ? settings.MetadataRegion ?? region : MetadataRegion.Length > 0 ? MetadataRegion : region;
+        return VersionUrl.Length == 0 || name.Length == 0 ? null : name;
     }
     public Uri MasterUri()
     {
@@ -155,4 +177,4 @@ public sealed record Config
     }
 }
 
-public sealed record RegionSettings(string Id, string CdnRoot, string? Locale = null, string[]? Locales = null, string? BiliVersion = null, ulong? CriKey = null);
+public sealed record RegionSettings(string Id, string CdnRoot, string? Locale = null, string[]? Locales = null, string? BiliVersion = null, ulong? CriKey = null, string? MetadataRegion = null);

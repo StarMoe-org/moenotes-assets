@@ -90,6 +90,13 @@ public static class Api
             OnPrepareResponse = file => file.Context.Response.Headers.CacheControl = file.Context.Request.Path.StartsWithSegments("/chart-site/assets", StringComparison.Ordinal)
                 ? "public,max-age=31536000,immutable" : "public,max-age=60",
         });
+        // Version files (Versions.cs) are rewritten when a release is detected or completes.
+        app.UseStaticFiles(new StaticFileOptions
+        {
+            RequestPath = "/versions",
+            FileProvider = new PhysicalFileProvider(service.VersionsRoot), // excludes dot-prefixed temporary files
+            OnPrepareResponse = file => file.Context.Response.Headers.CacheControl = "public,max-age=60",
+        });
         // Path routes: public/{locale}/{key}/{label}{ext} is a tree of hard links written at publication
         // (AssetService.MaterializePaths), served as static files without SQLite. Paths follow the newest published
         // export, so they get a short cache; /files/{id} stays immutable.
@@ -141,6 +148,7 @@ public static class Api
             File.WriteAllText(probe, "ready"); File.Delete(probe); return new { ready = true, reserved_temp_bytes = service.Budget.Used };
         });
         app.MapPost("/catalog/refresh", (string? region, string? locale, string? version) => Accepted(service.StartRefresh(region, locale, version)));
+        app.MapPost("/versions/check", async (bool? force, CancellationToken token) => Results.Json(await service.CheckVersions(force ?? false, token), Json.Options));
         app.MapGet("/catalogs", (string? region, string? locale) => service.ListCatalogs(region, locale));
         app.MapGet("/assets", (string? snapshot, string? region, string? locale, string? bundle, string? prefix, string? resource_type, int? offset, int? limit) =>
             service.ListAssets(snapshot, prefix, resource_type, offset ?? 0, limit ?? 100, region, locale, bundle));

@@ -39,6 +39,10 @@ key from a trusted backend/admin client over HTTPS, not public frontend code.
 | GET | /contents | Paginated scanned container paths across bundles |
 | GET | /scan/status | Bundle scan progress for a snapshot |
 | GET | /diffs?from=SNAPSHOT_A&to=SNAPSHOT_B | Bundle diff |
+| POST | /versions/check?force=false | Check version_url now; queue releases (200 with actions) |
+| GET | /versions/current_version.json, /versions/index.json | Latest completed release per region / all releases |
+| GET | /versions/{region}/{resource_version}/release.json | One release: languages, snapshots, counts |
+| GET | /versions/{region}/{resource_version}/diff/{locale}.json | Published-file diff against the previous release |
 | GET | /storage | Index, output deduplication and temporary budget statistics |
 | POST | /exports | 202 export task |
 | GET | /tasks/{id} | Persisted task state |
@@ -228,6 +232,46 @@ unique_bundle_definitions, unique_asset_definitions, sqlite_main_bytes,
 logical_output_bytes, referenced_output_bytes, deduplicated_output_bytes,
 reserved_temp_bytes. SQLite main bytes exclude WAL/SHM; output counters exclude
 catalogs and metadata. Temporary bytes are reservations, not a disk measurement.
+
+## Version tracking
+
+With `version_url` configured, the service reads that document (the metadata service's
+`current_version.json`: `regions.{name}.resource_version`, `client_version`, `version`,
+`verified_at`, `server.cdnRoot`) every `version_poll_secs` and on `POST /versions/check`.
+Each configured region maps to the entry `metadata_region` (default: its ID; `""` opts out).
+`resource_version` must be a safe path segment (letters, digits, `.`, `_`, `-`); every
+`|`-separated cdnRoot must pass the `cdn_root` rules (HTTPS, no user info, query or fragment).
+
+A region gets a new release, `{region}:{resource_version}`, when its entry's version or CDN
+roots differ from its latest release, or that release failed; `force=true` also re-runs a
+completed one. The release is a normal FIFO batch (`GET /tasks/batches/{id}`: refresh then
+export of every configured language, prefix `""`), whose refreshes try the roots in order and
+record the answering root in the snapshot. Manual refreshes of a tracked region use its latest
+release's roots instead of `cdn_root`. Cancelled releases are not re-queued automatically.
+
+`POST /versions/check` returns `{url, checked, regions}`; each region has `action` (`queued`,
+`pending` (already queued), `current`, `cancelled`, `untracked`, `missing`, `invalid`, `error`
+(for example a full batch queue; retried by the next check)),
+`resource_version`, `release`, `batch` and `error`.
+
+When the batch ends, each language records its snapshot, `catalog_sha256`, the export task's
+`total`, `exported`, `skipped`, `failed` and `reused`, and a diff against the latest earlier
+release that exported that language (none for a region's first release). The release is
+`succeeded` (every language), `partial`, `failed` or `cancelled`. Files are rewritten
+atomically and served with `Cache-Control: public,max-age=60`:
+
+- `current_version.json`: `{schema_version, updated_at, regions, pending}`; `regions.{id}` is
+  the latest `succeeded`/`partial` release, `pending.{id}` lists queued/running ones.
+- `index.json`: `{schema_version, updated_at, regions: {id: [release, ...]}}`, newest first.
+- `{region}/{resource_version}/release.json`: one release: `resource_version`,
+  `client_version`, `master_version`, `metadata_region`, `cdn_root`, `state`, `detected_at`,
+  `completed_at`, `verified_at`, `previous`, and `locales.{locale}` with the counts above and
+  `diff` (`from`, `from_snapshot`, counts, `url`). Times are ISO 8601 UTC; null fields are omitted.
+- `{region}/{resource_version}/diff/{locale}.json`: `{from, to, summary, added, changed,
+  removed, failed}`. Keys are compared by the label, media type and sha256 of their published
+  files, so a re-export with identical bytes is unchanged. `added`/`changed` entries list the
+  new or changed `files` by path name (`/{locale}/{key}/{name}`); `failed` entries carry the
+  export error and are not also listed as removed. Unchanged keys are only counted.
 
 ## Chart site
 

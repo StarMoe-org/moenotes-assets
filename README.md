@@ -38,6 +38,7 @@ can own a data directory at a time. Use HTTP while the server is running.
 
 ```sh
 dotnet run --project CSharp -- refresh config.toml
+dotnet run --project CSharp -- update config.toml   # check version_url, unpack new releases
 dotnet run --project CSharp -- list config.toml 'Live/MusicScore/'
 dotnet run --project CSharp -- export config.toml 'Live/MusicScore/0007/0007_03'
 dotnet run --project CSharp -- export config.toml --prefix 'Live/MusicScore/'
@@ -212,6 +213,26 @@ Content-addressed outputs deduplicate disk bytes. Verified plaintext dependencie
 and matching conversion inputs also reuse decoding across snapshots. First
 downloads are still required. Metadata candidate
 hashes alone never authorize reusing unverified remote content.
+
+## Version tracking
+
+Set `version_url` to the metadata service's `current_version.json` (for example
+`https://metadata.bdon.moe/current_version.json`). While serving, the service checks it
+every `version_poll_secs` (default 600, `0` disables polling). Each configured region is
+matched to the document entry `metadata_region` (default: the region ID, so TW needs
+`metadata_region = "hk-tw-mo"`; `""` leaves a region untracked). When an entry's
+`resource_version` or `server.cdnRoot` differs from the region's last release, or that
+release failed, a release is queued: one all-language batch that refreshes each catalog
+from the entry's CDN roots (`a|b` mirrors are tried in order) and exports it. Later manual
+refreshes of that region also use those roots instead of `cdn_root`.
+
+When the batch ends the release is finalized and public JSON under `/versions/` is
+rewritten: `current_version.json` (latest completed release per region, plus pending ones),
+`index.json` (every release), and per release `{region}/{resource_version}/release.json`
+and `diff/{locale}.json`, which compares published files with the previous release.
+`POST /versions/check[?force=true]` (administrative) checks at once;
+`update CONFIG.toml [--force]` does the same from the CLI and waits for queued releases.
+The first detection on an empty store unpacks every tracked region in full.
 
 ## One-request all-language processing
 

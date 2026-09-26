@@ -4,8 +4,9 @@ namespace MoenotesAssets;
 
 public sealed record BatchRequest(string? Region = null, string[]? Locales = null, bool Export = true, string Prefix = "");
 public sealed record BatchStep(string Locale, string Phase, string State = "queued", string? TaskId = null, string? Snapshot = null, string? Error = null);
+// CdnRoot and Release are set for a release detected by version tracking (Versions.cs): refreshes use its roots.
 public sealed record BatchInfo(string Id, long Sequence, string Region, string Version, string Prefix, string State,
-    BatchStep[] Steps, long Created, long Updated);
+    BatchStep[] Steps, long Created, long Updated, string? CdnRoot = null, string? Release = null);
 
 public sealed partial class AssetService
 {
@@ -30,7 +31,7 @@ public sealed partial class AssetService
         batchRunner = Task.Run(ProcessBatches);
     }
 
-    public BatchInfo StartBatch(BatchRequest request)
+    public BatchInfo StartBatch(BatchRequest request, string? cdnRoot = null, string? release = null)
     {
         var scope = Config.ForRegion(request.Region);
         var languages = request.Locales ?? (scope.Locales.Length > 0 ? scope.Locales : [scope.Locale]);
@@ -47,7 +48,7 @@ public sealed partial class AssetService
                 ? new[] { new BatchStep(l, "refresh"), new BatchStep(l, "export") }
                 : new[] { new BatchStep(l, "refresh") }).ToArray();
             var batch = new BatchInfo(Guid.NewGuid().ToString("N"), ++batchSequence, scope.Region, scope.BiliVersion,
-                request.Prefix!, "queued", steps, Now, Now);
+                request.Prefix!, "queued", steps, Now, Now, cdnRoot, release);
             Store.Put("batch", batch.Id, batch);
             Console.Error.WriteLine($"[batch {batch.Id}] queued sequence={batch.Sequence} region={batch.Region} steps={steps.Length}");
             batchChannel.Writer.TryWrite(batch.Id);
@@ -103,6 +104,7 @@ public sealed partial class AssetService
     {
         try
         {
+            RecoverReleases();
             await foreach (var id in batchChannel.Reader.ReadAllAsync(shutdown.Token))
             {
                 using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(shutdown.Token);
@@ -130,6 +132,7 @@ public sealed partial class AssetService
                     }
                 }
                 finally { lock (batchGate) batchCancellations.Remove(id); }
+                FinalizeRelease(id);
             }
         }
         catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { }
@@ -167,7 +170,7 @@ public sealed partial class AssetService
                         lock (batchGate)
                         {
                             token.ThrowIfCancellationRequested();
-                            child = step.Phase == "refresh" ? StartRefresh(batch.Region, step.Locale, batch.Version)
+                            child = step.Phase == "refresh" ? StartRefresh(batch.Region, step.Locale, batch.Version, batch.CdnRoot)
                                 : StartExport(new(Prefix: batch.Prefix, Snapshot: step.Snapshot));
                             step = step with { State = "running", TaskId = child.Id };
                             SaveStep(id, index, step);

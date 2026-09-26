@@ -41,6 +41,12 @@ allow_loopback_http = false
 # chart_base_sha256 = "ab6ee0103e32812be74e61735a5479b6403ceb624d96613d0e70dbd17b3cca7a"
 # master_root = "https://metadata.example.invalid/master"
 
+# Optional version tracking (docs/API.md "Version tracking"): check the metadata service's current_version.json every
+# version_poll_secs (0: only POST /versions/check or the CLI `update`). A region whose resource_version or cdnRoot
+# changed is refreshed from that cdnRoot and exported in every language; /versions/ then publishes the release and diffs.
+# version_url = "https://metadata.example.invalid/current_version.json"
+# version_poll_secs = 600
+
 # Optional region array; top-level region must identify a configured entry.
 # When omitted, the top-level cdn_root defines the only region.
 # [[regions]]
@@ -49,3 +55,5 @@ allow_loopback_http = false
 # locale = "zh-Hant"
 # locales = ["zh-Hans", "zh-Hant", "en", "ko", "ja"]
 # bili_version = "main"
+# Entry name in version_url's document (default: id; "" leaves the region untracked).
+# metadata_region = "hk-tw-mo"

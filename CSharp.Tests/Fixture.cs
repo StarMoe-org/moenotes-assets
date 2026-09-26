@@ -14,14 +14,14 @@ internal static class Fixture
 {
     public const string Key = "Live/MusicScore/test", Internal = "Assets/fixture.bytes";
     public static readonly byte[] Body = "{\"fixture\":true}"u8.ToArray();
-    public static (byte[] Catalog, byte[] Bundle) Create()
+    public static (byte[] Catalog, byte[] Bundle) Create(byte[]? body = null)
     {
-        var plain = Bundle(); var crc = ~BinaryTools.Crc32(Serialized());
+        var plain = Bundle(Serialized(body: body)); var crc = ~BinaryTools.Crc32(Serialized(body: body));
         var catalog = Catalog(plain.Length, crc); Crypto.Decrypt(plain, "fixture.bundle", 0); return (catalog, plain);
     }
-    public static byte[] Serialized(byte[]? objectData = null, int classId = 49)
+    public static byte[] Serialized(byte[]? objectData = null, int classId = 49, byte[]? body = null)
     {
-        using var gz = new MemoryStream(); using (var zip = new GZipStream(gz, CompressionLevel.Optimal, true)) zip.Write(Body);
+        using var gz = new MemoryStream(); using (var zip = new GZipStream(gz, CompressionLevel.Optimal, true)) zip.Write(body ?? Body);
         using var text = new MemoryStream(); using var tw = new BinaryWriter(text); String(tw, "fixture"); tw.Write((int)gz.Length); tw.Write(gz.ToArray());
         if (objectData != null) { text.SetLength(0); text.Write(objectData); }
         using var bundle = new MemoryStream(); using var bw = new BinaryWriter(bundle);
