@@ -171,9 +171,6 @@ public sealed partial class ChartSite(string root, string baseDir, Func<string, 
             yield return (id, manifest, bytes);
         }
     }
-    IEnumerable<(string Id, JsonObject Manifest)> Manifests() => Directory.Exists(ChartsDir)
-        ? Directory.GetFiles(ChartsDir, "*.json").Order(StringComparer.Ordinal).Select(p => (Path.GetFileNameWithoutExtension(p), Parse(File.ReadAllBytes(p)).AsObject()))
-        : [];
     public bool IsBase(string id) => Has(id) && Parse(File.ReadAllBytes(ManifestPath(id)))["builder"] is null;
 
     /// <summary>The paths of a chart that belong to its song: they are never taken from another chart.</summary>
@@ -422,12 +419,19 @@ public sealed partial class ChartSite(string root, string baseDir, Func<string, 
     }
 
     // ------------------------------------------------------------------ index
-    /// <summary>charts.json from every manifest; assets no manifest references are removed.</summary>
-    public JsonObject WriteIndex()
+    /// <summary>charts.json and models.json from every manifest; assets no chart or model manifest references are removed.</summary>
+    public JsonObject WriteIndex() => WriteIndex(Root);
+    /// <summary>The site indexes of `root` (charts and Live2D models share its assets); unreferenced assets are removed.</summary>
+    public static JsonObject WriteIndex(string root)
     {
-        Directory.CreateDirectory(AssetsDir);
+        root = Path.GetFullPath(root);
+        var assetsDir = Path.Combine(root, "assets"); var chartsDir = Path.Combine(root, "charts");
+        Directory.CreateDirectory(assetsDir);
         var charts = new List<JsonObject>(); var used = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var (id, manifest) in Manifests())
+        var manifests = Directory.Exists(chartsDir)
+            ? Directory.GetFiles(chartsDir, "*.json").Order(StringComparer.Ordinal).Select(p => (Path.GetFileNameWithoutExtension(p), Parse(File.ReadAllBytes(p)).AsObject()))
+            : [];
+        foreach (var (id, manifest) in manifests)
         {
             var files = manifest["files"]!.AsObject();
             foreach (var (_, entry) in files) used.UnionWith(EntryAssets(entry!.AsObject()));
@@ -448,11 +452,13 @@ public sealed partial class ChartSite(string root, string baseDir, Func<string, 
         var order = ChartScore.Difficulties.ToList();
         charts = [.. charts.OrderBy(c => (int)c["musicId"]!).ThenBy(c => order.IndexOf((string)c["difficulty"]!))];
         var index = new JsonObject { ["format"] = Format, ["charts"] = new JsonArray([.. charts]) };
-        WriteAtomic(Path.Combine(Root, "charts.json"), Dump(index));
+        WriteAtomic(Path.Combine(root, "charts.json"), Dump(index));
+        var (models, modelAssets) = ModelSite.WriteIndex(root);
+        used.UnionWith(modelAssets);
         var removed = 0;
-        foreach (var file in Directory.GetFiles(AssetsDir))
+        foreach (var file in Directory.GetFiles(assetsDir))
             if (!used.Contains("assets/" + Path.GetFileName(file))) { File.Delete(file); removed++; }
-        return new() { ["charts"] = charts.Count, ["assets"] = used.Count, ["removedAssets"] = removed };
+        return new() { ["charts"] = charts.Count, ["models"] = models, ["assets"] = used.Count, ["removedAssets"] = removed };
     }
 
     static byte[] Dump(JsonNode node) => [.. JsonSerializer.SerializeToUtf8Bytes(Sorted(node), Indented), (byte)'\n'];

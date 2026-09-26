@@ -140,10 +140,10 @@ public sealed partial class AssetService
         return Convert.ToHexStringLower(hash.GetHashAndReset());
     }
 
-    private async Task<Dictionary<string, JsonArray>> LoadMaster(CancellationToken token)
+    private async Task<Dictionary<string, JsonArray>> LoadMaster(CancellationToken token, string[]? names = null)
     {
         var root = Config.MasterUri(); var tables = new Dictionary<string, JsonArray>(StringComparer.Ordinal);
-        foreach (var name in MasterTables)
+        foreach (var name in names ?? MasterTables)
         {
             var bytes = await Fetch(new Uri(root.AbsoluteUri.TrimEnd('/') + "/" + name + ".json"), 256 << 20, token);
             var node = JsonNode.Parse(bytes);

@@ -44,6 +44,7 @@ public static class Worker
         job.Config.Validate(); Require(job.Inputs.Length > 0 && job.Inputs.Select(i => i.Location.Id).Distinct().Count() == job.Inputs.Length, "Invalid worker inputs");
         Directory.CreateDirectory(job.Output); var output = new Output(job);
         if (job.Mode == "acb") return CueSheet(job, output);
+        if (job.Mode == "live2d") return Live2DModel.Build(job);
         if (job.Target.Provider == Catalog.Cri || (job.Target.ResourceType.StartsWith("CriWare.", StringComparison.Ordinal) && job.Inputs.Any(i => i.Location.Provider == Catalog.Cri)))
         {
             var inputs = job.Inputs.Where(i => i.Location.Provider == Catalog.Cri).ToArray();
@@ -72,48 +73,62 @@ public static class Worker
         output.Bytes(bytes, "acb", job.Target.Key.Split('/')[^1], "application/octet-stream");
         return output.Files.ToArray();
     }
-    private static void Unity(WorkerJob job, Output output)
+    /// <summary>An AssetsManager with the class package (config class_data, else the embedded one).</summary>
+    internal static AssetsManager Manager(Config config)
     {
         var manager = new AssetsManager();
+        if (config.ClassData.Length == 0)
+        {
+            using var stream = typeof(Worker).Assembly.GetManifestResourceStream("MoenotesAssets.Resources.classdata.tpk")!;
+            manager.LoadClassPackage(stream);
+        }
+        else manager.LoadClassPackage(config.ClassData);
+        return manager;
+    }
+    /// <summary>
+    /// The serialized files of the job's bundles (sizes, expansion budget and catalog CRC checked; compressed bundles
+    /// unpacked next to the job output), all of one Unity version.
+    /// </summary>
+    internal static List<AssetsFileInstance> LoadBundles(AssetsManager manager, WorkerJob job)
+    {
+        var files = new List<AssetsFileInstance>(); long expanded = 0;
+        foreach (var input in job.Inputs.OrderBy(i => i.Location.Id))
+        {
+            Require(input.Location.Provider != Catalog.Cri, "Mixed providers");
+            var bundle = manager.LoadBundleFile(input.Path, false);
+            var info = bundle.file;
+            Require(info.Header.Signature == "UnityFS" && info.Header.FileStreamHeader.TotalFileSize == new FileInfo(input.Path).Length, "UnityFS size mismatch");
+            var size = info.BlockAndDirInfo.BlockInfos.Sum(b => (long)b.DecompressedSize);
+            expanded += size; Require(expanded <= job.Config.ExpandedBytes && info.BlockAndDirInfo.DirectoryInfos.Count <= 10000, "Bundle expansion budget");
+            if (info.DataIsCompressed)
+            {
+                var unpacked = Path.Combine(Path.GetDirectoryName(job.Output)!, $"unpacked-{input.Location.Id}.bundle");
+                using (var writer = new AssetsFileWriter(File.Create(unpacked))) info.Unpack(writer);
+                manager.UnloadBundleFile(bundle); bundle = manager.LoadBundleFile(unpacked, false); info = bundle.file;
+            }
+            var reader = info.DataReader; reader.Position = 0; var buffer = new byte[65536]; long remaining = size; uint crc = 0xffffffff;
+            while (remaining > 0)
+            {
+                var n = reader.BaseStream.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
+                Require(n > 0, "Truncated bundle data"); crc = BinaryTools.Crc32(buffer.AsSpan(0, n), crc); remaining -= n;
+            }
+            Require(input.Location.Options?.Crc is null or 0 || ~crc == input.Location.Options.Crc, "Bundle CRC mismatch");
+            for (var i = 0; i < info.BlockAndDirInfo.DirectoryInfos.Count; i++)
+                // Raw .resS pixels can accidentally resemble a serialized-file
+                // header. UnityFS explicitly marks serialized entries with bit 4.
+                if (info.BlockAndDirInfo.DirectoryInfos[i].IsSerialized)
+                    files.Add(manager.LoadAssetsFileFromBundle(bundle, i, false));
+        }
+        Require(files.Count <= 10000 && files.Sum(f => (long)f.file.Metadata.AssetInfos.Count) <= 1000000, "Unity metadata budget");
+        Require(files.Select(f => f.file.Metadata.UnityVersion).Distinct().Count() == 1, "Mixed Unity versions are unsupported");
+        return files;
+    }
+    private static void Unity(WorkerJob job, Output output)
+    {
+        var manager = Manager(job.Config);
         try
         {
-            var classData = job.Config.ClassData;
-            if (classData.Length == 0)
-            {
-                using var stream = typeof(Worker).Assembly.GetManifestResourceStream("MoenotesAssets.Resources.classdata.tpk")!;
-                manager.LoadClassPackage(stream);
-            }
-            else manager.LoadClassPackage(classData);
-            var files = new List<AssetsFileInstance>(); long expanded = 0;
-            foreach (var input in job.Inputs.OrderBy(i => i.Location.Id))
-            {
-                Require(input.Location.Provider != Catalog.Cri, "Mixed providers");
-                var bundle = manager.LoadBundleFile(input.Path, false);
-                var info = bundle.file;
-                Require(info.Header.Signature == "UnityFS" && info.Header.FileStreamHeader.TotalFileSize == new FileInfo(input.Path).Length, "UnityFS size mismatch");
-                var size = info.BlockAndDirInfo.BlockInfos.Sum(b => (long)b.DecompressedSize);
-                expanded += size; Require(expanded <= job.Config.ExpandedBytes && info.BlockAndDirInfo.DirectoryInfos.Count <= 10000, "Bundle expansion budget");
-                if (info.DataIsCompressed)
-                {
-                    var unpacked = Path.Combine(Path.GetDirectoryName(job.Output)!, $"unpacked-{input.Location.Id}.bundle");
-                    using (var writer = new AssetsFileWriter(File.Create(unpacked))) info.Unpack(writer);
-                    manager.UnloadBundleFile(bundle); bundle = manager.LoadBundleFile(unpacked, false); info = bundle.file;
-                }
-                var reader = info.DataReader; reader.Position = 0; var buffer = new byte[65536]; long remaining = size; uint crc = 0xffffffff;
-                while (remaining > 0)
-                {
-                    var n = reader.BaseStream.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
-                    Require(n > 0, "Truncated bundle data"); crc = BinaryTools.Crc32(buffer.AsSpan(0, n), crc); remaining -= n;
-                }
-                Require(input.Location.Options?.Crc is null or 0 || ~crc == input.Location.Options.Crc, "Bundle CRC mismatch");
-                for (var i = 0; i < info.BlockAndDirInfo.DirectoryInfos.Count; i++)
-                    // Raw .resS pixels can accidentally resemble a serialized-file
-                    // header. UnityFS explicitly marks serialized entries with bit 4.
-                    if (info.BlockAndDirInfo.DirectoryInfos[i].IsSerialized)
-                        files.Add(manager.LoadAssetsFileFromBundle(bundle, i, false));
-            }
-            Require(files.Count <= 10000 && files.Sum(f => (long)f.file.Metadata.AssetInfos.Count) <= 1000000, "Unity metadata budget");
-            Require(files.Select(f => f.file.Metadata.UnityVersion).Distinct().Count() == 1, "Mixed Unity versions are unsupported");
+            var files = LoadBundles(manager, job);
             var targets = new List<AssetExternal>(); var seen = new HashSet<(string, long)>();
             foreach (var file in files)
             {
@@ -252,7 +267,7 @@ public static class Worker
         Require(bytes.AsSpan().StartsWith("@UTF"u8) || bytes.AsSpan().StartsWith("CRID"u8), "Unsupported embedded CRI container");
         return bytes;
     }
-    private static (byte[] Pixels, int Width, int Height) Texture(AssetExternal asset, Config config)
+    internal static (byte[] Pixels, int Width, int Height) Texture(AssetExternal asset, Config config)
     {
         var texture = TextureFile.ReadTextureFile(asset.baseField);
         var width = texture.m_Width; var height = texture.m_Height;

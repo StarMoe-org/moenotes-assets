@@ -77,10 +77,11 @@ public static class Api
                 await context.Response.WriteAsJsonAsync(new { error = status == 500 ? "Internal service error" : exception.Message });
             }
         });
-        // Chart site (AssetService.StartChartSite): content-addressed assets never change under their name; manifests
-        // and charts.json change with each build.
+        // Chart site (AssetService.StartChartSite) and its Live2D models (AssetService.StartModelSite): content-addressed
+        // assets never change under their name; manifests, charts.json and models.json change with each build.
         var chartTypes = new FileExtensionContentTypeProvider();
         chartTypes.Mappings[".glsl"] = "text/plain; charset=utf-8"; chartTypes.Mappings[".flac"] = "audio/flac"; chartTypes.Mappings[".m4a"] = "audio/mp4";
+        chartTypes.Mappings[".moc3"] = "application/octet-stream";
         Directory.CreateDirectory(service.ChartSiteRoot);
         app.UseStaticFiles(new StaticFileOptions
         {
@@ -154,6 +155,7 @@ public static class Api
             service.ListAssets(snapshot, prefix, resource_type, offset ?? 0, limit ?? 100, region, locale, bundle));
         app.MapPost("/exports", (ExportRequest request) => Accepted(service.StartExport(request)));
         app.MapPost("/chart-site/build", (ChartSiteRequest? request) => Accepted(service.StartChartSite(request ?? new())));
+        app.MapPost("/model-site/build", (ModelSiteRequest? request) => Accepted(service.StartModelSite(request ?? new())));
         app.MapPost("/tasks/batches", (BatchRequest request) =>
         {
             var batch = service.StartBatch(request);

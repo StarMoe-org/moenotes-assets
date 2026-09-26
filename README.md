@@ -76,6 +76,14 @@ notes and effects of a static base package (downloaded from `chart_base_url`, ch
 and for every song its own converted chart, BGM, sound definition and jacket from this service's exports.
 `chart-base NNNOTES_SITE OUT.zip SOURCE` packs an nnnotes `web` site as such a package. See [Chart site](docs/CHART_SITE.md).
 
+## Model site
+
+`model-site CONFIG.toml [--force] [MODEL_ID...]` (or `POST /model-site/build`) publishes every Live2D model of the
+catalog for the ournotes-player Live2D viewer into the same site (`/chart-site/models.json`, `models/<id>.json`, shared
+`assets/`), built from the model's bundles as nnnotes `web --live2d` builds them. The script classes and Cubism mask
+materials come from the game's `base.apk` (`apk`, or pulled by [playfetch](https://github.com/Exmeaning/playfetch) with
+`playfetch`); models follow releases automatically. See [Model site](docs/MODEL_SITE.md).
+
 ## Export formats
 
 | Input | Output |

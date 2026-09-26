@@ -107,7 +107,7 @@ public class VersionTests
     }
 
     [Fact]
-    public async Task ReleasesAndMasterChangesRebuildTheChartSite()
+    public async Task ReleasesAndMasterChangesRebuildTheSites()
     {
         using var dir = new TempDirectory(); var fixture = Fixture.Create();
         string master = "m1", cdn = ""; var masterReads = 0;
@@ -138,6 +138,7 @@ public class VersionTests
             VersionUrl = address + "/current_version.json",
             MasterRoot = address + "/master",
             ChartBase = chartBase,
+            Apk = Path.Combine(dir.Path, "missing.apk"),
         });
         var release = await service.WaitRelease((await service.CheckVersions()).Regions[0].Release!).WaitAsync(TimeSpan.FromSeconds(60));
         Assert.Equal("succeeded", release.State);
@@ -146,12 +147,17 @@ public class VersionTests
         Assert.Equal(("chart_site", "succeeded", release.Locales[0].Snapshot), (first!.Kind, first.State, first.Snapshot));
         Assert.True(File.Exists(Path.Combine(service.ChartSiteRoot, "charts.json")));
         Assert.Equal(1, masterReads);
+        // The model site follows the same release (here it cannot read its APK).
+        var model = await service.WaitAutomaticModelSite().WaitAsync(TimeSpan.FromSeconds(60));
+        Assert.Equal(("model_site", "failed"), (model!.Kind, model.State));
+        Assert.Contains("missing.apk", model.Error);
         // New master data at the same resource version: recorded on the release and the site is rebuilt, nothing re-unpacked.
         master = "m2";
         var changed = Assert.Single((await service.CheckVersions()).Regions);
         Assert.Equal(("master", release.Id), (changed.Action, changed.Release));
         var second = await service.WaitAutomaticChartSite().WaitAsync(TimeSpan.FromSeconds(60));
         Assert.NotEqual(first.Id, second!.Id);
+        Assert.NotEqual(model.Id, (await service.WaitAutomaticModelSite().WaitAsync(TimeSpan.FromSeconds(60)))!.Id);
         Assert.Equal(("m2", release.BatchId), (service.GetRelease(release.Id)!.MasterVersion, service.GetRelease(release.Id)!.BatchId));
         Assert.Equal("current", Assert.Single((await service.CheckVersions()).Regions).Action);
         Assert.Equal(2, masterReads);

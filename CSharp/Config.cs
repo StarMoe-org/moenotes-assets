@@ -39,6 +39,12 @@ public sealed record Config
     public string ChartBaseSha256 { get; init; } = "";
     public string ChartBase { get; init; } = "";
     public string MasterRoot { get; init; } = "";
+    // Live2D model site (docs/MODEL_SITE.md): the game's base.apk (its script classes and Cubism mask materials), a
+    // local file (apk) or pulled from Google Play by playfetch (apk_package; playfetch_args are passed through).
+    public string Apk { get; init; } = "";
+    public string Playfetch { get; init; } = "";
+    public string ApkPackage { get; init; } = "com.bilibili.sirius";
+    public string[] PlayfetchArgs { get; init; } = [];
     // Version tracking (docs/API.md): the metadata service's current_version.json, checked every version_poll_secs
     // (0: only on request). A region's entry is metadata_region (default: its id; "" in [[regions]] opts out).
     public string VersionUrl { get; init; } = "";
@@ -58,6 +64,7 @@ public sealed record Config
         {
             DataDir = Path.GetFullPath(config.DataDir, directory),
             ChartBase = config.ChartBase.Length == 0 ? "" : Path.GetFullPath(config.ChartBase, directory),
+            Apk = config.Apk.Length == 0 ? "" : Path.GetFullPath(config.Apk, directory),
         };
     }
     public void Validate()
@@ -90,6 +97,8 @@ public sealed record Config
         Require(VersionPollSecs == 0 || VersionPollSecs is >= 60 and <= 86400, "version_poll_secs must be 0 or 60 to 86400");
         foreach (var name in Regions.Select(r => r.MetadataRegion).Append(MetadataRegion).OfType<string>())
             Require(name.Length <= 64 && name.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-'), "Invalid metadata_region");
+        Require(ApkPackage.Length is > 0 and <= 255 && ApkPackage.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_'), "Invalid apk_package");
+        Require(PlayfetchArgs.Length <= 32 && PlayfetchArgs.All(a => a.Length <= 1024 && !a.Any(char.IsControl)), "Invalid playfetch_args");
         Require(ChartBaseUrl.Length == 0 || (ChartBaseSha256.Length == 64 && ChartBaseSha256.All(c => char.IsAsciiDigit(c) || c is >= 'a' and <= 'f')), "chart_base_url needs chart_base_sha256 (64 lowercase hex digits)");
     }
     public Uri ChartBaseUri()

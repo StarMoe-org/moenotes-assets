@@ -41,6 +41,13 @@ allow_loopback_http = false
 # chart_base_sha256 = "ab6ee0103e32812be74e61735a5479b6403ceb624d96613d0e70dbd17b3cca7a"
 # master_root = "https://metadata.example.invalid/master"
 
+# Optional Live2D model site (docs/MODEL_SITE.md), published next to the chart site: the game's base.apk supplies the
+# script classes and Cubism mask materials, from a local file or pulled from Google Play by playfetch before each build.
+# apk = "/srv/apk/base.apk"
+# playfetch = "playfetch"
+# apk_package = "com.bilibili.sirius"
+# playfetch_args = ["-account", "tw"]
+
 # Optional version tracking (docs/API.md "Version tracking"): check the metadata service's current_version.json every
 # version_poll_secs (0: only POST /versions/check or the CLI `update`). A region whose resource_version or cdnRoot
 # changed is refreshed from that cdnRoot and exported in every language; /versions/ then publishes the release and diffs.

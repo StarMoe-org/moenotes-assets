@@ -20,6 +20,13 @@ changes require explicit release notes; a frozen stable API is not claimed.
 
 ## 0.2.0-csharp (unreleased)
 
+- Add the Live2D model site (`model-site`, `POST /model-site/build`, served with the chart site at `/chart-site/`):
+  every `Character/Live2D/…/model/…` key built for the ournotes-player Live2D viewer (`models.json`,
+  `models/<id>.json`), a port of nnnotes `web --live2d` whose JSON, moc3 and GLSL are byte-identical to nnnotes' on all
+  239 TW models. The APK's script classes and Cubism mask materials come from `apk` or a playfetch pull (`playfetch`);
+  models record their inputs and rebuild automatically after releases. The chart site's asset cleanup keeps model
+  assets.
+
 - Add the ournotes-player chart site (`chart-site`, `POST /chart-site/build`, static `/chart-site/`): a static base
   package (`chart-base` packs an nnnotes `web` site; `chart_base_url` + `chart_base_sha256` download it once) plus
   charts composed from the song's exports, with a port of the nnnotes chart converter (field-for-field equal on all

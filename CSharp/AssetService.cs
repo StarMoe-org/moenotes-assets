@@ -65,6 +65,7 @@ public sealed partial class AssetService : IAsyncDisposable
             downloadWork = new(d => RemoveTree(d.Directory));
             InitializeBatches();
             chartRunner = Task.Run(RunAutomaticChartSite);
+            modelRunner = Task.Run(RunAutomaticModelSite);
         }
         catch { Store?.Dispose(); instance.Dispose(); throw; }
     }
@@ -476,7 +477,7 @@ public sealed partial class AssetService : IAsyncDisposable
     public Manifest? Manifest(string id) => Store.Find<Manifest>("export", id);
     public async ValueTask DisposeAsync()
     {
-        shutdown.Cancel(); await versionPolling; await batchRunner; await chartRunner; await storageSweep; await Task.WhenAll(running.Values.ToArray());
+        shutdown.Cancel(); await versionPolling; await batchRunner; await chartRunner; await modelRunner; await storageSweep; await Task.WhenAll(running.Values.ToArray());
         // Shared producers may still be unwinding after their last waiter cancelled.
         await exportWork.Drain(); await downloadWork.Drain();
         http.Dispose(); pathCache.Dispose(); Store.Dispose(); instance.Dispose(); shutdown.Dispose();
