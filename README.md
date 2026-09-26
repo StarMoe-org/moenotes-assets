@@ -87,8 +87,9 @@ and for every song its own converted chart, BGM, sound definition and jacket fro
 
 Asset paths are resolved exactly through bundle containers. Original names are
 labels, never output filesystem paths. Known unsupported types and ambiguous
-labels are recorded as skipped before download; decoder/data errors still fail.
-USM alpha video (`@ALP`) is only recognizable after download and is also skipped.
+labels are counted as skipped before download; decoder/data errors still fail.
+USM alpha video (`@ALP`) and empty sprite atlases are only recognizable after
+download and are also skipped. Skipped items are counted, not listed in results.
 Raw resource containers are not advertised as successful exports.
 
 Audio uses 96 kbps mono / 192 kbps stereo AAC without normalization. USM ADX/HCA

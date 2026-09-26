@@ -68,6 +68,18 @@ changes require explicit release notes; a frozen stable API is not claimed.
   arithmetic. The movie profile is now v2, so affected videos are exported again.
 - Record USM alpha video (`@ALP`), which is unsupported, as skipped instead of failed.
   It is detected after download; outputs and profiles are unchanged.
+- Fix the remaining TW export failures: ACB cues that reference a block sequence
+  (intro/loop BGM), USM movies written without the CRI mask (plain MPEG was
+  unmasked into invalid data) or without `audio_codec` in the audio header (ADX/HCA
+  is identified by its magic), and tight sprite meshes of 4096px textures, whose
+  per-triangle bounding boxes exceeded the rasterization budget; masks now test
+  only each row's span and are pixel-identical. Empty sprite atlases are skipped.
+- Count skipped export items without listing them in task `results`; a full
+  catalog export's task document shrinks from megabytes of unsupported objects.
+- Start listening without waiting for orphan cleanup: the scan of `blobs/` and
+  `exports/` for uncommitted publications (about a minute on a large network
+  volume) runs in the background, and publication holds a lock from its first
+  move until its commit so the sweep never removes it.
 - Fix intermittent Windows test cleanup failures: tests decoded images through
   SkiaSharp file paths, whose inheritable native handles leaked into workers
   started by parallel tests. Images are now decoded from memory.

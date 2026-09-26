@@ -189,7 +189,10 @@ public static class Worker
             case AssetClassID.Sprite:
                 ExportSprite(manager, asset, output, label); break;
             case AssetClassID.SpriteAtlas:
-                foreach (var pointer in field!["m_PackedSprites"]["Array"].Children) ExportObject(manager, Resolve(manager, asset.file, pointer), output, seen);
+                var packed = field!["m_PackedSprites"]["Array"].Children;
+                // Some atlases ship with no packed sprites (placeholders); there is nothing to export, which is not a failure.
+                if (packed.Count == 0) throw new UnsupportedInputException("Empty sprite atlas");
+                foreach (var pointer in packed) ExportObject(manager, Resolve(manager, asset.file, pointer), output, seen);
                 break;
             case AssetClassID.MonoBehaviour when output.Job.Target.ResourceType.StartsWith("CriWare.", StringComparison.Ordinal):
                 var bytes = EmbeddedCriBytes(field!, output.Job.Config.InputBytes);

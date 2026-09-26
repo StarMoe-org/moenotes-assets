@@ -21,6 +21,9 @@ public sealed partial class AssetService : IAsyncDisposable
     private readonly CancellationTokenSource shutdown = new();
     private readonly Dictionary<string, WeakReference<SemaphoreSlim>> publicationGates = new();
     private readonly string classDataIdentity;
+    // Held from a publication's first move into blobs/ or exports/ until its SQLite commit; see SweepStorage.
+    private readonly object storageGate = new();
+    private Task storageSweep = Task.CompletedTask;
     private sealed record Download(WorkerInput Input, string Hash, string PlainHash, string Directory);
     public static long Now => DateTimeOffset.UtcNow.ToUnixTimeSeconds();
     public AssetService(Config config)
@@ -38,12 +41,12 @@ public sealed partial class AssetService : IAsyncDisposable
                 Require(!Directory.Exists(path) || !File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint), "Symlink storage directory");
                 Directory.CreateDirectory(path);
             }
-            // Startup is serial and precedes listening; log phases so slow volumes show where time goes.
+            // Startup is serial and precedes listening; log phases so slow volumes show where time goes. Orphaned blobs
+            // and export directories are never served, so SweepStorage removes them beside the listener instead.
             var clock = System.Diagnostics.Stopwatch.StartNew(); var phases = new List<string>();
             void Phase(string name) { phases.Add($"{name}={clock.Elapsed.TotalSeconds:F1}s"); clock.Restart(); }
             Store = new Store(Config.DataDir); Phase("store");
             Blobs = new BlobStore(Config.DataDir);
-            Blobs.Recover(Store.ReferencedBlobs()); Phase("blobs");
             foreach (var scope in Store.All<Snapshot>("snapshot").GroupBy(s => Store.ScopeSetting(s.Region, s.Locale, s.BiliVersion)))
             {
                 var preferred = Store.Get<string>("setting", scope.Key) ?? scope.OrderBy(s => s.Created).Last().Id;
@@ -54,11 +57,8 @@ public sealed partial class AssetService : IAsyncDisposable
             foreach (var task in Store.UnfinishedTasks())
                 Store.Put("task", task.Id, task with { State = "failed", Error = "Interrupted by service restart; resubmit failed keys", Updated = Now });
             foreach (var path in Directory.EnumerateFileSystemEntries(Path.Combine(Config.DataDir, "tmp"))) RemoveTree(path);
-            var published = Store.Ids("export");
-            foreach (var path in Directory.EnumerateDirectories(Path.Combine(Config.DataDir, "exports")))
-                if (!published.Contains(Path.GetFileName(path))) RemoveTree(path);
-            Phase("exports");
-            Console.Error.WriteLine($"[startup] storage recovery {string.Join(' ', phases)} ({published.Count} exports)");
+            Phase("tmp");
+            Console.Error.WriteLine($"[startup] storage recovery {string.Join(' ', phases)}");
             http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false, AutomaticDecompression = DecompressionMethods.None }) { Timeout = Timeout.InfiniteTimeSpan };
             downloads = new(config.Downloads); workers = new(config.Workers); videos = new(config.Videos); queue = new(config.QueueLimit);
             Budget = new(config.TempBytes);
@@ -72,6 +72,41 @@ public sealed partial class AssetService : IAsyncDisposable
         if (!Path.Exists(path)) return;
         if (Directory.Exists(path)) Directory.Delete(path, !File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint));
         else File.Delete(path);
+    }
+    /// <summary>
+    /// Removes blobs and exports/{id} directories that an interrupted publication left without their SQLite commit.
+    /// They are never served, so this runs beside the listener: listing a large blob tree on a network volume takes
+    /// about a minute. Candidates are rechecked under storageGate, so a concurrent publication is never removed.
+    /// </summary>
+    public Task SweepStorage() => storageSweep = Task.Run(() =>
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var blobs = Sweep(Store.ReferencedBlobs, Blobs.Files(), File.Delete);
+            var exports = Sweep(() => Store.Ids("export"), Directory.EnumerateDirectories(Path.Combine(Config.DataDir, "exports")), RemoveTree);
+            Console.Error.WriteLine($"[startup] storage sweep removed {blobs} orphan blobs and {exports} unpublished exports in {clock.Elapsed.TotalSeconds:F1}s");
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception error) { Console.Error.WriteLine($"[startup] storage sweep stopped: {error.Message}"); }
+    });
+    private int Sweep(Func<HashSet<string>> committed, IEnumerable<string> paths, Action<string> remove)
+    {
+        var known = committed(); var candidates = new List<string>();
+        foreach (var path in paths)
+        {
+            shutdown.Token.ThrowIfCancellationRequested();
+            if (!known.Contains(Path.GetFileName(path))) candidates.Add(path);
+        }
+        if (candidates.Count == 0) return 0;
+        lock (storageGate)
+        {
+            // Anything published since the first read committed before this lock was taken.
+            known = committed();
+            var orphans = candidates.Where(p => !known.Contains(Path.GetFileName(p))).ToArray();
+            foreach (var path in orphans) remove(path);
+            return orphans.Length;
+        }
     }
     public async Task CheckMedia(CancellationToken token = default)
     {
@@ -197,7 +232,8 @@ public sealed partial class AssetService : IAsyncDisposable
         if (request.Prefix != null) keys = ExportSelection.UniqueKeys(catalog, keys);
         return Start("export", snapshot.Id, keys.Length, async (task, token) =>
         {
-            var results = new List<ItemResult>();
+            // Skipped items are only counted: listing every unsupported object made progress documents megabytes.
+            var results = new List<ItemResult>(); int completed = 0, skipped = 0, reused = 0, succeeded = 0;
             var progress = System.Diagnostics.Stopwatch.StartNew();
             try
             {
@@ -225,21 +261,22 @@ public sealed partial class AssetService : IAsyncDisposable
                     catch (Exception e) { item = new(key, null, e.Message); }
                     lock (results)
                     {
-                        results.Add(item);
-                        if ((results.Count % 20 == 0 && progress.Elapsed >= TimeSpan.FromSeconds(1)) || progress.Elapsed >= TimeSpan.FromSeconds(10))
+                        completed++;
+                        if (item.SkipReason != null) skipped++; else results.Add(item);
+                        if (item.ExportId != null) succeeded++;
+                        if (item.Reused) reused++;
+                        if ((completed % 20 == 0 && progress.Elapsed >= TimeSpan.FromSeconds(1)) || progress.Elapsed >= TimeSpan.FromSeconds(10))
                         {
-                            task = task with { Completed = results.Count, Skipped = results.Count(r => r.SkipReason != null), Reused = results.Count(r => r.Reused), Results = results.OrderBy(r => r.Key, StringComparer.Ordinal).ToArray(), Updated = Now };
+                            task = task with { Completed = completed, Skipped = skipped, Reused = reused, Results = results.OrderBy(r => r.Key, StringComparer.Ordinal).ToArray(), Updated = Now };
                             Store.Put("task", task.Id, task);
-                            Console.Error.WriteLine($"[task {task.Id}] export region={snapshot.Region} locale={snapshot.Locale} progress={results.Count}/{keys.Length} succeeded={results.Count(r => r.ExportId != null)} skipped={task.Skipped} reused={task.Reused} failed={results.Count(r => r.Error != null)}");
+                            Console.Error.WriteLine($"[task {task.Id}] export region={snapshot.Region} locale={snapshot.Locale} progress={completed}/{keys.Length} succeeded={succeeded} skipped={skipped} reused={reused} failed={results.Count - succeeded}");
                             progress.Restart();
                         }
                     }
                 });
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-            var successes = results.Count(r => r.ExportId != null);
-            var skipped = results.Count(r => r.SkipReason != null);
-            return task with { Completed = results.Count, Skipped = skipped, Reused = results.Count(r => r.Reused), Results = results.OrderBy(r => r.Key, StringComparer.Ordinal).ToArray(), State = token.IsCancellationRequested ? "cancelled" : successes + skipped == keys.Length ? "succeeded" : successes > 0 ? "partial" : "failed" };
+            return task with { Completed = completed, Skipped = skipped, Reused = reused, Results = results.OrderBy(r => r.Key, StringComparer.Ordinal).ToArray(), State = token.IsCancellationRequested ? "cancelled" : succeeded + skipped == keys.Length ? "succeeded" : succeeded > 0 ? "partial" : "failed" };
         });
     }
     private async Task<Download> DownloadOne(Snapshot snapshot, Location location, CancellationToken token)
@@ -336,8 +373,9 @@ public sealed partial class AssetService : IAsyncDisposable
                 var reused = new Manifest(id, snapshot.Id, key, profile, leases.Select(l => new Source(l.Value.Input.Location, l.Value.Hash, l.Value.PlainHash)).ToArray(), copied, snapshot.Region, previous.Id);
                 stage = Path.Combine(Config.DataDir, "tmp", "reuse-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(stage);
                 await File.WriteAllTextAsync(Path.Combine(stage, "manifest.json"), Json.Write(reused), token);
-                token.ThrowIfCancellationRequested(); Directory.Move(stage, destination); moved = true;
-                Store.Publish(reused, true); moved = false; MaterializePaths(reused); return reused;
+                token.ThrowIfCancellationRequested();
+                lock (storageGate) { Directory.Move(stage, destination); moved = true; Store.Publish(reused, true); moved = false; }
+                MaterializePaths(reused); return reused;
             }
             stage = Path.Combine(Config.DataDir, "tmp", "job-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(stage);
             var output = Path.Combine(stage, "out");
@@ -369,10 +407,14 @@ public sealed partial class AssetService : IAsyncDisposable
             }
             var published = files.Select(f => new PublishedFile(Crypto.Identity(id, f.Name), f.Name, f.Label, f.MediaType, f.Bytes, f.Sha256, f.Metadata)).ToArray();
             var manifest = new Manifest(id, snapshot.Id, key, profile, leases.Select(l => new Source(l.Value.Input.Location, l.Value.Hash, l.Value.PlainHash)).ToArray(), published, snapshot.Region);
-            foreach (var file in files) Blobs.Publish(Path.Combine(output, file.Name), file.Sha256, file.Bytes);
             await File.WriteAllTextAsync(Path.Combine(output, "manifest.json"), Json.Write(manifest), token);
-            token.ThrowIfCancellationRequested(); Directory.Move(output, destination); moved = true;
-            Store.Publish(manifest, true); moved = false; MaterializePaths(manifest);
+            token.ThrowIfCancellationRequested();
+            lock (storageGate)
+            {
+                foreach (var file in files) Blobs.Publish(Path.Combine(output, file.Name), file.Sha256, file.Bytes);
+                Directory.Move(output, destination); moved = true; Store.Publish(manifest, true); moved = false;
+            }
+            MaterializePaths(manifest);
             Store.Put("conversion", conversionId, manifest.Id); return manifest;
         }
         finally
@@ -415,7 +457,7 @@ public sealed partial class AssetService : IAsyncDisposable
     public Manifest? Manifest(string id) => Store.Find<Manifest>("export", id);
     public async ValueTask DisposeAsync()
     {
-        shutdown.Cancel(); await batchRunner; await Task.WhenAll(running.Values.ToArray());
+        shutdown.Cancel(); await batchRunner; await storageSweep; await Task.WhenAll(running.Values.ToArray());
         // Shared producers may still be unwinding after their last waiter cancelled.
         await exportWork.Drain(); await downloadWork.Drain();
         http.Dispose(); pathCache.Dispose(); Store.Dispose(); instance.Dispose(); shutdown.Dispose();

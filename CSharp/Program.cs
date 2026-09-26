@@ -42,9 +42,11 @@ try
     {
         await service.CheckMedia(cancellation.Token); var app = Api.Build(service); service.EnableAutomaticBundleScan();
         _ = service.BackfillPublicTree(); // background; path misses fall back to SQLite until it finishes
+        _ = service.SweepStorage(); // background; orphaned blobs are never served
         await app.RunAsync(cancellation.Token); return 0;
     }
     if (args[0] == "list") { Console.WriteLine(Json.Write(service.ListAssets(null, args.ElementAtOrDefault(2), null, 0, 1000))); return 0; }
+    _ = service.SweepStorage();
     TaskInfo task;
     if (args[0] == "refresh") task = service.StartRefresh();
     else if (args[0] == "scan") task = service.StartBundleScan();

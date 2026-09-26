@@ -70,4 +70,24 @@ public class CatalogIndexTests
         Assert.Equal(sha, store.Get<FileRecord>("file", "tw-file")!.BlobSha256); Assert.Equal(sha, store.Get<FileRecord>("file", "kr-file")!.BlobSha256);
         var stats = System.Text.Json.JsonSerializer.SerializeToElement(store.StorageStats(0), Json.Options); Assert.Equal(bytes.Length, stats.GetProperty("deduplicated_output_bytes").GetInt64());
     }
+    [Fact]
+    public async Task StorageSweepRemovesOnlyUncommittedPublications()
+    {
+        using var dir = new TempDirectory();
+        await using var service = new AssetService(new Config { DataDir = dir.Path, CdnRoot = "https://example.com" });
+        string Blob(string text)
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(text); var sha = Crypto.Sha256(bytes);
+            var source = Path.Combine(dir.Path, sha + ".tmp"); File.WriteAllBytes(source, bytes); service.Blobs.Publish(source, sha, bytes.Length); return sha;
+        }
+        string ExportDirectory(string id) { var path = Path.Combine(dir.Path, "exports", id); Directory.CreateDirectory(path); File.WriteAllText(Path.Combine(path, "manifest.json"), "{}"); return path; }
+        var kept = Blob("committed"); var orphan = Blob("interrupted");
+        var published = ExportDirectory("published"); var unpublished = ExportDirectory("unpublished");
+        service.Store.Publish(new("published", "snapshot", "key", Worker.Profile, [], [new("file", "00000.txt", "label", "text/plain", 9, kept, null)]), true);
+        // Recovery runs after construction, beside the listener, instead of blocking startup.
+        Assert.True(File.Exists(service.Blobs.PathFor(orphan)));
+        await service.SweepStorage();
+        Assert.True(File.Exists(service.Blobs.PathFor(kept))); Assert.False(File.Exists(service.Blobs.PathFor(orphan)));
+        Assert.True(Directory.Exists(published)); Assert.False(Directory.Exists(unpublished));
+    }
 }

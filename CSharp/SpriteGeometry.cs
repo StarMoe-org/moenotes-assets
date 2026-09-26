@@ -62,15 +62,38 @@ public static class SpriteGeometry
             var a = vertices[ai]; var b = vertices[bi]; var c = vertices[ci];
             var left = (int)Math.Clamp(Math.Floor(Math.Min(a.X, Math.Min(b.X, c.X))), 0, width - 1); var right = (int)Math.Clamp(Math.Ceiling(Math.Max(a.X, Math.Max(b.X, c.X))), 0, width - 1);
             var bottom = (int)Math.Clamp(Math.Floor(Math.Min(a.Y, Math.Min(b.Y, c.Y))), 0, height - 1); var top = (int)Math.Clamp(Math.Ceiling(Math.Max(a.Y, Math.Max(b.Y, c.Y))), 0, height - 1);
-            work += (long)(right - left + 1) * (top - bottom + 1); Require(work <= 200000000, "Sprite rasterization budget");
             if (Math.Abs(Cross(b - a, c - a)) < 0.000001) continue;
-            for (var y = bottom; y <= top; y++) for (var x = left; x <= right; x++)
+            work += top - bottom + 1;
+            for (var y = bottom; y <= top; y++)
             {
-                var p = new Vector2(x + 0.5f, y + 0.5f); var e0 = Cross(b - a, p - a); var e1 = Cross(c - b, p - b); var e2 = Cross(a - c, p - c);
-                if ((e0 >= 0 && e1 >= 0 && e2 >= 0) || (e0 <= 0 && e1 <= 0 && e2 <= 0)) mask[y * width + x] = true;
+                // Test only the row's crossing of the triangle, widened by a pixel for rounding: tight meshes of large
+                // textures hold thousands of thin diagonal triangles whose bounding boxes sum to billions of pixels.
+                var (from, to) = RowSpan(a, b, c, y + 0.5f);
+                int first = (int)Math.Max(left, MathF.Floor(from - 0.5f) - 1), last = (int)Math.Min(right, MathF.Ceiling(to - 0.5f) + 1);
+                work += Math.Max(0, last - first + 1); Require(work <= 200000000, "Sprite rasterization budget");
+                for (var x = first; x <= last; x++)
+                {
+                    var p = new Vector2(x + 0.5f, y + 0.5f); var e0 = Cross(b - a, p - a); var e1 = Cross(c - b, p - b); var e2 = Cross(a - c, p - c);
+                    if ((e0 >= 0 && e1 >= 0 && e2 >= 0) || (e0 <= 0 && e1 <= 0 && e2 <= 0)) mask[y * width + x] = true;
+                }
             }
         }
         for (var i = 0; i < mask.Length; i++) if (!mask[i]) Array.Clear(pixels, i * 4, 4);
+    }
+    /// <summary>Where the line y = <paramref name="py"/>, clamped into the triangle's height, crosses triangle abc.</summary>
+    private static (float From, float To) RowSpan(Vector2 a, Vector2 b, Vector2 c, float py)
+    {
+        py = Math.Clamp(py, Math.Min(a.Y, Math.Min(b.Y, c.Y)), Math.Max(a.Y, Math.Max(b.Y, c.Y)));
+        float from = float.PositiveInfinity, to = float.NegativeInfinity;
+        Edge(a, b); Edge(b, c); Edge(c, a);
+        return (from, to);
+        void Edge(Vector2 p, Vector2 q)
+        {
+            if (py < Math.Min(p.Y, q.Y) || py > Math.Max(p.Y, q.Y)) return;
+            var x0 = p.Y == q.Y ? Math.Min(p.X, q.X) : p.X + (py - p.Y) * (q.X - p.X) / (q.Y - p.Y);
+            var x1 = p.Y == q.Y ? Math.Max(p.X, q.X) : x0;
+            from = Math.Min(from, x0); to = Math.Max(to, x1);
+        }
     }
     private static float Cross(Vector2 a, Vector2 b) => a.X * b.Y - a.Y * b.X;
     private static byte[] Bytes(AssetTypeValueField field) => field.Value?.ValueType == AssetValueType.ByteArray ? field.AsByteArray : field["Array"].Value?.ValueType == AssetValueType.ByteArray ? field["Array"].AsByteArray : field["Array"].Children.Select(c => c.AsByte).ToArray();

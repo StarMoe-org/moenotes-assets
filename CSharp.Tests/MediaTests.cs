@@ -29,8 +29,8 @@ public class MediaTests
         File.WriteAllBytes(Path.Combine(dir.Path, "data", "catalogs", digest + ".bin"), catalog);
         var snapshot = new Snapshot("snapshot", digest, "hk", "zh-Hant", "main", url, "", AssetService.Now); service.Store.IndexSnapshot(snapshot, Catalog.Parse(catalog));
         var task = await service.Wait(service.StartExport(new(Keys: [Fixture.Key], Snapshot: snapshot.Id)).Id).WaitAsync(TimeSpan.FromSeconds(60));
-        Assert.Equal("succeeded", task.State); Assert.Equal(1, task.Skipped);
-        var item = Assert.Single(task.Results); Assert.Null(item.Error); Assert.Null(item.ExportId); Assert.Contains("@ALP", item.SkipReason);
+        // Skips are counted, not listed.
+        Assert.Equal("succeeded", task.State); Assert.Equal(1, task.Skipped); Assert.Equal(1, task.Completed); Assert.Empty(task.Results);
         await cdn.StopAsync();
     }
     private static WorkerJob Job(Config config, string path, string output, string type) => new(config,
@@ -46,6 +46,26 @@ public class MediaTests
         var job = Job(config, path, Path.Combine(dir.Path, "out"), "CriWare.Assets.CriAtomAcbAsset");
         var result = await Processes.Worker(job, dir.Path, CancellationToken.None); Assert.Single(result); Assert.Equal("audio/mp4", result[0].MediaType); Assert.Equal("synthetic-tone", result[0].Label);
         File.WriteAllBytes(path, CriFixture.Acb(hca, true)); var exception = await Assert.ThrowsAsync<InvalidDataException>(() => Processes.Worker(job with { Output = Path.Combine(dir.Path, "external") }, dir.Path, CancellationToken.None)); Assert.Contains("External AWB", exception.Message);
+        File.WriteAllBytes(path, CriFixture.Acb(hca, blocks: true));
+        var blocks = await Processes.Worker(job with { Output = Path.Combine(dir.Path, "blocks") }, dir.Path, CancellationToken.None); Assert.Single(blocks); Assert.Equal("synthetic-tone", blocks[0].Label);
+    }
+    // Some movies are written without the CRI mask (plain MPEG, as MemberCard previews) or without audio_codec in the
+    // audio header (ADX identified by its magic).
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UsmMaskAndAdxAreDetectedFromTheStreams(bool plain)
+    {
+        using var dir = new TempDirectory(); var config = new Config { CdnRoot = "https://cdn.invalid" }; var raw = Path.Combine(dir.Path, "source.m2v");
+        await Processes.Run(config.Ffmpeg, ["-nostdin", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=64x48:rate=25", "-t", "0.4", "-c:v", "mpeg2video", "-f", "mpeg2video", raw], CancellationToken.None);
+        var pcm = new[] { Enumerable.Range(0, 19200).Select(i => (short)(Math.Sin(i * 0.05) * 6000)).ToArray() };
+        var adx = new AdxWriter().GetFile(new Pcm16FormatBuilder(pcm, 48000).Build());
+        var path = Path.Combine(dir.Path, "movie.usm"); File.WriteAllBytes(path, CriFixture.Usm(File.ReadAllBytes(raw), config.CriKey, 10, 25, 1, adx, plain: plain, audioCodec: false));
+        var job = Job(config, path, Path.Combine(dir.Path, "out"), "CriWare.Assets.CriManaUsmAsset");
+        var result = await Processes.Worker(job, dir.Path, CancellationToken.None); Assert.Single(result);
+        var streams = (await CriMedia.Probe(config, Path.Combine(job.Output, result[0].Name), CancellationToken.None))["streams"]!.AsArray();
+        Assert.Equal("10", (string?)streams.Single(s => (string?)s!["codec_type"] == "video")!["nb_read_frames"]);
+        Assert.Equal("aac", (string?)streams.Single(s => (string?)s!["codec_type"] == "audio")!["codec_name"]);
     }
     [Theory]
     [InlineData(false)]

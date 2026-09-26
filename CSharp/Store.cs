@@ -98,7 +98,7 @@ public sealed partial class Store : IDisposable
     }
     /// <summary>Record IDs of one kind, without deserializing bodies.</summary>
     public HashSet<string> Ids(string kind) => Strings("SELECT id FROM records WHERE kind=$kind", ("$kind", kind));
-    /// <summary>Blob hashes referenced by published files, read in SQL so startup does not parse every file record.</summary>
+    /// <summary>Blob hashes referenced by published files, read in SQL so the storage sweep does not parse every file record.</summary>
     public HashSet<string> ReferencedBlobs() =>
         Strings("SELECT json_extract(body,'$.blob_sha256') FROM records WHERE kind='file' AND json_extract(body,'$.blob_sha256') IS NOT NULL");
     public TaskInfo[] UnfinishedTasks()
@@ -111,16 +111,15 @@ public sealed partial class Store : IDisposable
             return values.ToArray();
         }
     }
-    private HashSet<string> Strings(string sql, params (string Name, object Value)[] parameters)
+    /// <summary>A committed string column, read on a pooled reader so large scans do not hold the writer.</summary>
+    private HashSet<string> Strings(string sql, params (string Name, object Value)[] parameters) => Read(c =>
     {
-        lock (gate)
-        {
-            using var command = Command(sql, parameters);
-            using var reader = command.ExecuteReader(); var values = new HashSet<string>(StringComparer.Ordinal);
-            while (reader.Read()) values.Add(reader.GetString(0));
-            return values;
-        }
-    }
+        using var command = c.CreateCommand(); command.CommandText = sql;
+        foreach (var (name, value) in parameters) command.Parameters.AddWithValue(name, value);
+        using var reader = command.ExecuteReader(); var values = new HashSet<string>(StringComparer.Ordinal);
+        while (reader.Read()) values.Add(reader.GetString(0));
+        return values;
+    });
     public void Put<T>(string kind, string id, T value) => Execute("INSERT INTO records VALUES($kind,$id,$body) ON CONFLICT(kind,id) DO UPDATE SET body=excluded.body",
         ("$kind", kind), ("$id", id), ("$body", Json.Write(value)));
     public void Publish(Manifest manifest, bool contentAddressed = false)

@@ -17,14 +17,14 @@ public sealed class BlobStore(string root)
             Config.Require(new FileInfo(target).Length == bytes, "Stored content size mismatch"); File.Delete(source);
         }
     }
-    public void Recover(HashSet<string> referenced)
+    /// <summary>Every stored blob file, named by its digest.</summary>
+    public IEnumerable<string> Files()
     {
         Directory.CreateDirectory(Root);
         foreach (var bucket in Directory.EnumerateDirectories(Root))
         {
             Config.Require(!File.GetAttributes(bucket).HasFlag(FileAttributes.ReparsePoint), "Symlink blob directory");
-            foreach (var path in Directory.EnumerateFiles(bucket))
-                if (!referenced.Contains(Path.GetFileName(path))) File.Delete(path);
+            foreach (var path in Directory.EnumerateFiles(bucket)) yield return path;
         }
     }
 }

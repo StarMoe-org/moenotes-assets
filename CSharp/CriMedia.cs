@@ -68,6 +68,7 @@ public static class CriMedia
         Dictionary<string, object?>[] Table(string name, bool optional = false) => optional && (!header.TryGetValue(name, out var b) || b is not byte[] { Length: > 0 }) ? [] : CriTables.Parse(header.Bytes(name));
         var cues = Table("CueTable"); var names = Table("CueNameTable"); var waves = Table("WaveformTable");
         var synths = Table("SynthTable", true); var sequences = Table("SequenceTable", true); var tracks = Table("TrackTable", true);
+        var blockSequences = Table("BlockSequenceTable", true); var blocks = Table("BlockTable", true);
         var events = Table(header.ContainsKey("TrackEventTable") ? "TrackEventTable" : "CommandTable", true);
         var references = new SortedDictionary<int, List<Cue>>();
         for (var cueIndex = 0; cueIndex < cues.Length; cueIndex++)
@@ -92,24 +93,36 @@ public static class CriMedia
                         var refs = Row(synths).Bytes("ReferenceItems"); Require(refs.Length % 4 == 0, "Invalid synth references");
                         for (var at = 0; at < refs.Length; at += 4) Visit(BinaryPrimitives.ReadUInt16BigEndian(refs.AsSpan(at)), BinaryPrimitives.ReadUInt16BigEndian(refs.AsSpan(at + 2)));
                         break;
-                    case 3:
+                    case 3: Tracks(Row(sequences)); break;
                     case 8:
-                        var sequence = Row(sequences); var indices = sequence.Bytes("TrackIndex"); var count = sequence.Number("NumTracks"); Require(count >= 0 && count * 2 <= indices.Length, "Sequence tracks truncated");
-                        for (var i = 0; i < count; i++)
+                        // A block sequence (looping BGM: intro and loop blocks) plays its own tracks, then each block's.
+                        var blockSequence = Row(blockSequences); Tracks(blockSequence);
+                        var blockIndices = blockSequence.Bytes("BlockIndex"); var blockCount = blockSequence.Number("NumBlocks");
+                        Require(blockCount >= 0 && blockCount * 2 <= blockIndices.Length, "Block sequence blocks truncated");
+                        for (var i = 0; i < blockCount; i++)
                         {
-                            var trackIndex = BinaryPrimitives.ReadUInt16BigEndian(indices.AsSpan(i * 2)); Require(trackIndex < tracks.Length, "Track missing");
-                            var eventIndex = tracks[trackIndex].Number("EventIndex", -1); if (eventIndex == 65535) continue;
-                            Require(eventIndex >= 0 && eventIndex < events.Length, "Track event missing");
-                            var command = events[eventIndex].Bytes("Command"); var r = new CriTables.Cursor(command);
-                            while (r.Position < command.Length)
-                            {
-                                var code = r.U16(); var length = r.Byte(); var args = r.Take(length);
-                                if (code == 0) break;
-                                if (code == 0x7d0) { Require(args.Length >= 4, "Invalid cue command"); Visit(BinaryPrimitives.ReadUInt16BigEndian(args), BinaryPrimitives.ReadUInt16BigEndian(args[2..])); }
-                            }
+                            var blockIndex = BinaryPrimitives.ReadUInt16BigEndian(blockIndices.AsSpan(i * 2)); Require(blockIndex < blocks.Length, "Block missing");
+                            Tracks(blocks[blockIndex]);
                         }
                         break;
                     default: throw new InvalidDataException($"Unsupported cue reference {type}");
+                }
+            }
+            void Tracks(Dictionary<string, object?> owner)
+            {
+                var indices = owner.Bytes("TrackIndex"); var count = owner.Number("NumTracks"); Require(count >= 0 && count * 2 <= indices.Length, "Sequence tracks truncated");
+                for (var i = 0; i < count; i++)
+                {
+                    var trackIndex = BinaryPrimitives.ReadUInt16BigEndian(indices.AsSpan(i * 2)); Require(trackIndex < tracks.Length, "Track missing");
+                    var eventIndex = tracks[trackIndex].Number("EventIndex", -1); if (eventIndex == 65535) continue;
+                    Require(eventIndex >= 0 && eventIndex < events.Length, "Track event missing");
+                    var command = events[eventIndex].Bytes("Command"); var r = new CriTables.Cursor(command);
+                    while (r.Position < command.Length)
+                    {
+                        var code = r.U16(); var length = r.Byte(); var args = r.Take(length);
+                        if (code == 0) break;
+                        if (code == 0x7d0) { Require(args.Length >= 4, "Invalid cue command"); Visit(BinaryPrimitives.ReadUInt16BigEndian(args), BinaryPrimitives.ReadUInt16BigEndian(args[2..])); }
+                    }
                 }
             }
         }

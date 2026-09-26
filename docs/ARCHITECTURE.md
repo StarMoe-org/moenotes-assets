@@ -49,7 +49,8 @@ quota. Use OS/container policies for hostile inputs and strict system limits.
 Each resource writes into an isolated staging directory. The service rechecks
 output sizes/hashes, renames on the same filesystem, then commits file/manifest
 records in one SQL transaction. Only indexed files are served. Crash recovery
-cleans unindexed publications and temporary files and fails unfinished tasks.
+cleans temporary files and fails unfinished tasks before listening; unindexed
+publications are swept in the background after startup.
 A single data-directory lock excludes concurrent owners.
 
 The C# store uses `csharp.sqlite`; a legacy `index.sqlite` causes startup rejection
@@ -83,8 +84,11 @@ released after scanning; local game dependencies cannot be scanned remotely.
 
 Publication validates worker outputs and moves each into `blobs/<prefix>/<sha256>`.
 Per-export manifests and per-file records preserve scope identities. SQLite commit
-makes the publication visible; startup removes orphan blobs after acquiring the
-exclusive store lock. Old C# export file paths remain readable. Catalog history
+makes the publication visible. Orphan blobs and export directories, left by a
+publication interrupted before its commit, are never served, so a background sweep
+removes them after the listener starts; publication holds a lock from its first
+move until its commit, and the sweep rechecks candidates under it. Old C# export
+file paths remain readable. Catalog history
 and referenced blobs have no eviction policy. Cross-snapshot output deduplication
 saves storage. A separate conversion index reuses decoding after plaintext hashes
 are verified, while retaining separate manifests and file IDs per snapshot. First
