@@ -253,8 +253,13 @@ export of every configured language, prefix `""`), whose refreshes try the roots
 record the answering root in the snapshot. Manual refreshes of a tracked region use its latest
 release's roots instead of `cdn_root`. Cancelled releases are not re-queued automatically.
 
+When the entry's `version` (master data) changes while its resource version and roots stay, nothing is
+unpacked again: the latest release's `master_version` (and `client_version`, `verified_at`) is updated, the
+version files are rewritten and, for the default region, the chart site rebuilds its stale charts
+([Chart site](CHART_SITE.md#stale-charts-and-automatic-builds)); so does a completed release of the default region.
+
 `POST /versions/check` returns `{url, checked, regions}`; each region has `action` (`queued`,
-`pending` (already queued), `current`, `cancelled`, `untracked`, `missing`, `invalid`, `error`
+`pending` (already queued), `current`, `master` (master data changed), `cancelled`, `untracked`, `missing`, `invalid`, `error`
 (for example a full batch queue; retried by the next check)),
 `resource_version`, `release`, `batch` and `error`.
 

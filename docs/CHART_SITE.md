@@ -73,6 +73,22 @@ The task (`kind: chart_site`) reports one result per chart id. `charts.json` is 
 manifest references are removed. A new game version that changes the stage or notes needs a new package (a new
 release and sha256 in the configuration); new songs do not.
 
+## Stale charts and automatic builds
+
+Every chart built here records `inputs` in its manifest: a hash of the build version (`ChartSite.BuildVersion`), the
+static base (`chart_base_sha256`, or the package's `base.json`), the locale, the song's master rows (MasterLiveMusic,
+MasterLiveMusicScore, MasterSound, texts, stage band) and the sha256 of its published score, BGM files, the BGM cue
+sheet's plaintext source (which holds the ACB) and jacket. A build first computes these from export manifests and
+master data only, then composes the charts the site lacks and those whose recorded `inputs` differ: a new score,
+BGM, jacket, level or title rebuilds just the affected charts. Charts built before `inputs` were recorded are
+rebuilt once. Charts taken from an nnnotes site are never rebuilt; `--force` still rebuilds every built chart.
+
+With version tracking (`version_url`, see [API](API.md)) and the chart site configured, builds start on their own:
+after a release of the default region whose default language succeeded or was partial, and when that region's
+master data version changes at an unchanged resource version (songs unlocked by master rows alone). Requests that
+arrive during a build are coalesced into one more build. Logs show `[chart-site] automatic build ID after …`; the CLI
+`update` waits for these builds and prints the last one as `chart_site`.
+
 ## Verification
 
 - `ChartScoreTests.MatchesTheReferenceOnRealCharts` compares the converter with nnnotes `score.convert` output when

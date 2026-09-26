@@ -107,6 +107,58 @@ public class VersionTests
     }
 
     [Fact]
+    public async Task ReleasesAndMasterChangesRebuildTheChartSite()
+    {
+        using var dir = new TempDirectory(); var fixture = Fixture.Create();
+        string master = "m1", cdn = ""; var masterReads = 0;
+        var builder = WebApplication.CreateBuilder(); builder.Logging.ClearProviders(); builder.WebHost.UseUrls("http://127.0.0.1:0");
+        await using var server = builder.Build();
+        server.MapGet("/current_version.json", () => Results.Text(new JsonObject
+        {
+            ["regions"] = new JsonObject { ["tw"] = new JsonObject { ["version"] = master, ["resource_version"] = "1.0.0.1", ["server"] = new JsonObject { ["cdnRoot"] = cdn } } },
+        }.ToJsonString(), "application/json"));
+        server.MapGet("/master/{table}", (string table) =>
+        {
+            if (table == "MasterLiveMusic.json") Interlocked.Increment(ref masterReads);
+            return Results.Text("{\"_allData\":[]}", "application/json");
+        });
+        server.MapGet("/v1/asset/Android/{file}", (string file) => file.EndsWith(".hash") ? Results.Text("hash") : Results.Bytes(file.EndsWith(".bin") ? fixture.Catalog : fixture.Bundle));
+        await server.StartAsync(); var address = Address(server); cdn = address + "/v1";
+        var chartBase = Path.Combine(dir.Path, "base");
+        Directory.CreateDirectory(Path.Combine(chartBase, "templates")); Directory.CreateDirectory(Path.Combine(chartBase, "assets"));
+        File.WriteAllText(Path.Combine(chartBase, "base.json"), "{\"format\":1,\"siteFormat\":2}");
+        await using var service = new AssetService(new Config
+        {
+            DataDir = Path.Combine(dir.Path, "data"),
+            AllowLoopbackHttp = true,
+            Region = "tw",
+            Locale = "en",
+            Locales = ["en"],
+            CdnRoot = address + "/stale",
+            VersionUrl = address + "/current_version.json",
+            MasterRoot = address + "/master",
+            ChartBase = chartBase,
+        });
+        var release = await service.WaitRelease((await service.CheckVersions()).Regions[0].Release!).WaitAsync(TimeSpan.FromSeconds(60));
+        Assert.Equal("succeeded", release.State);
+        // The completed release builds the chart site from its snapshot.
+        var first = await service.WaitAutomaticChartSite().WaitAsync(TimeSpan.FromSeconds(60));
+        Assert.Equal(("chart_site", "succeeded", release.Locales[0].Snapshot), (first!.Kind, first.State, first.Snapshot));
+        Assert.True(File.Exists(Path.Combine(service.ChartSiteRoot, "charts.json")));
+        Assert.Equal(1, masterReads);
+        // New master data at the same resource version: recorded on the release and the site is rebuilt, nothing re-unpacked.
+        master = "m2";
+        var changed = Assert.Single((await service.CheckVersions()).Regions);
+        Assert.Equal(("master", release.Id), (changed.Action, changed.Release));
+        var second = await service.WaitAutomaticChartSite().WaitAsync(TimeSpan.FromSeconds(60));
+        Assert.NotEqual(first.Id, second!.Id);
+        Assert.Equal(("m2", release.BatchId), (service.GetRelease(release.Id)!.MasterVersion, service.GetRelease(release.Id)!.BatchId));
+        Assert.Equal("current", Assert.Single((await service.CheckVersions()).Regions).Action);
+        Assert.Equal(2, masterReads);
+        await server.StopAsync();
+    }
+
+    [Fact]
     public void PlainHttpVersionUrlNeedsItsOwnOptIn()
     {
         var cluster = new Config { CdnRoot = "https://cdn.example.invalid/prod", VersionUrl = "http://metadata.moenotes.svc.cluster.local/current_version.json" };

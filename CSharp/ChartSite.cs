@@ -23,6 +23,8 @@ public sealed partial class ChartSite(string root, string baseDir, Func<string, 
 {
     public const int Format = 2;
     public const string Builder = "moenotes-assets";
+    // Part of every built chart's inputs (AssetService.ChartInputs): bump it when composition changes to rebuild them all.
+    public const int BuildVersion = 1;
     const int SplitMinBytes = 512 * 1024;
     [GeneratedRegex("^[A-Za-z0-9_$.\\-]+$")] private static partial Regex SplitKey();
     static readonly JsonSerializerOptions Compact = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping, MaxDepth = 1024 };
@@ -45,19 +47,26 @@ public sealed partial class ChartSite(string root, string baseDir, Func<string, 
     // How a cue sheet is stored, in nnnotes' words (live.json audio.source, live-audio.json decoded.<sheet>.layout).
     public const string SplitAcbLayout = "SplitAcbData (chunks joined, XOR-masked)";
     public const string EmbeddedAcbLayout = "CriSerializedBytesAssetImpl (ACB bytes inside the bundle)";
-    /// <summary>One chart to compose. <paramref name="Facts"/> lacks `notes` and `durationMs`, which follow from the score and BGM.</summary>
+    /// <summary>
+    /// One chart to compose. <paramref name="Facts"/> lacks `notes` and `durationMs`, which follow from the score and BGM.
+    /// <paramref name="Inputs"/>, a hash of what the chart is built from, is recorded in its manifest (see NeedsBuild).
+    /// </summary>
     public sealed record ChartInput(int MusicId, string Difficulty, int Band, byte[] Score, JsonObject ScoreSource, JsonObject Facts,
         JsonObject LiveMusic, string Sheet, string Cue, JsonObject SoundRow, AcbCues.Cue CueInfo, BgmLayer[] Layers,
-        string Jacket, byte[] JacketPng, int JacketWidth, int JacketHeight, string JacketSprite, string SheetLayout);
+        string Jacket, byte[] JacketPng, int JacketWidth, int JacketHeight, string JacketSprite, string SheetLayout, string? Inputs = null);
     sealed record Template(string Id, JsonObject Manifest, Dictionary<string, JsonObject> Static, Dictionary<string, JsonNode> Shaders);
 
     public static string ChartId(int musicId, string difficulty) => $"{musicId}_{difficulty}";
     public bool Has(string id) => File.Exists(ManifestPath(id));
     /// <summary>
-    /// Whether to compose a chart: one the site lacks; with <paramref name="force"/> every chart not taken from an nnnotes
-    /// site. With a static package, charts an earlier nnnotes site published are composed again.
+    /// Whether to compose a chart: one the site lacks, or a built one whose recorded inputs differ from
+    /// <paramref name="inputs"/> (built before inputs were recorded, or from another score, BGM, jacket or master rows);
+    /// with <paramref name="force"/> every chart not taken from an nnnotes site. With a static package, charts an earlier
+    /// nnnotes site published are composed again.
     /// </summary>
-    public bool NeedsBuild(string id, bool force) => IsPackage ? force || !Has(id) || IsBase(id) : force ? !IsBase(id) : !Has(id);
+    public bool NeedsBuild(string id, bool force, string? inputs = null) => IsPackage ? force || !Has(id) || IsBase(id) || Stale(id, inputs)
+        : force ? !IsBase(id) : !Has(id) || (!IsBase(id) && Stale(id, inputs));
+    bool Stale(string id, string? inputs) => inputs != null && (string?)Parse(File.ReadAllBytes(ManifestPath(id)))["inputs"] != inputs;
     string ManifestPath(string id) => Path.Combine(ChartsDir, id + ".json");
 
     // ------------------------------------------------------------------ store
@@ -315,6 +324,7 @@ public sealed partial class ChartSite(string root, string baseDir, Func<string, 
             ["template"] = template.Id,
             ["files"] = new JsonObject([.. files.Select(f => KeyValuePair.Create(f.Key, (JsonNode?)f.Value))]),
         };
+        if (input.Inputs != null) manifest["inputs"] = input.Inputs;
         WriteAtomic(ManifestPath(ChartId(input.MusicId, input.Difficulty)), Dump(manifest));
         return manifest;
     }

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
+using System.Threading.Channels;
 using static MoenotesAssets.Config;
 namespace MoenotesAssets;
 
@@ -9,9 +10,17 @@ public sealed record ChartSiteRequest(int[]? Music = null, bool Force = false, s
 // The chart site task: take the static base (a package downloaded from chart_base_url, or the chart_base directory),
 // then compose every chart of MasterLiveMusic the site lacks from the song's own exports (Live/MusicScore chart,
 // Cri/Sound BGM and its ACB, Image/Jacket) and a template of the same stage band. Served read-only at /chart-site/.
+// A built chart records a hash of its inputs, so a later build also composes the charts whose inputs changed.
 public sealed partial class AssetService
 {
     private readonly SemaphoreSlim chartGate = new(1);
+    // Automatic builds (Versions.cs): after the default region's release or a master data change. Requests that arrive
+    // during a build are coalesced into one more build.
+    private readonly Channel<string> chartRequests = Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
+    private int pendingChartRequests;
+    private Task chartRunner = Task.CompletedTask;
+    public TaskInfo? LastAutomaticChartSite { get; private set; }
+    private bool ChartSiteConfigured => Config.MasterRoot.Length > 0 && (Config.ChartBaseUrl.Length > 0 || Config.ChartBase.Length > 0);
     public string ChartSiteRoot => Path.Combine(Config.DataDir, "chart-site");
     public string ChartBaseRoot => Path.Combine(Config.DataDir, "chart-base");
     static readonly string[] MasterTables = ["MasterLiveMusic", "MasterLiveMusicScore", "MasterSound", "MasterSoundCueSheet", "MasterCharacter", "MasterBand", "MasterText"];
@@ -30,28 +39,45 @@ public sealed partial class AssetService
                 var imported = site.ImportBase();
                 Console.Error.WriteLine($"[chart-site] base {site.BaseDir} ({(site.IsPackage ? "static package" : "nnnotes site")}), imported {imported.Length} charts");
                 var master = await LoadMaster(token);
-                var charts = ChartMaster.Charts(master).Where(c => request.Music == null || request.Music.Contains(c.MusicId))
-                    .Where(c => site.NeedsBuild(ChartSite.ChartId(c.MusicId, c.Difficulty), request.Force)).ToList();
-                task = task with { Total = charts.Count, Updated = Now }; Store.Put("task", task.Id, task);
-                var results = new List<ItemResult>();
-                foreach (var song in charts.GroupBy(c => c.MusicId))
+                var baseIdentity = Config.ChartBaseUrl.Length > 0 ? Config.ChartBaseSha256
+                    : site.IsPackage ? Crypto.Sha256(File.ReadAllBytes(Path.Combine(site.BaseDir, "base.json"))) : "nnnotes-site";
+                // Plan from the cheap inputs (export manifests and master rows) before composing anything.
+                var results = new List<ItemResult>(); var plan = new List<(List<ChartMaster.Chart> Charts, Dictionary<string, string> Inputs)>();
+                foreach (var song in ChartMaster.Charts(master).Where(c => request.Music == null || request.Music.Contains(c.MusicId)).GroupBy(c => c.MusicId))
                 {
                     token.ThrowIfCancellationRequested();
                     try
                     {
-                        var inputs = await SongInputs(snapshot, catalog, master, song.ToList(), token);
-                        foreach (var input in inputs)
+                        var inputs = await ChartInputs(snapshot, catalog, master, song.ToList(), baseIdentity, token);
+                        var stale = song.Where(c => site.NeedsBuild(ChartSite.ChartId(c.MusicId, c.Difficulty), request.Force, inputs[ChartSite.ChartId(c.MusicId, c.Difficulty)])).ToList();
+                        if (stale.Count > 0) plan.Add((stale, inputs));
+                    }
+                    catch (Exception e) when (e is not OperationCanceledException)
+                    {
+                        // Without its inputs a song's missing charts fail; charts it already has are kept as they are.
+                        results.AddRange(song.Where(c => site.NeedsBuild(ChartSite.ChartId(c.MusicId, c.Difficulty), request.Force))
+                            .Select(c => new ItemResult(ChartSite.ChartId(c.MusicId, c.Difficulty), null, e.Message)));
+                    }
+                }
+                var total = results.Count + plan.Sum(p => p.Charts.Count);
+                task = task with { Total = total, Completed = results.Count, Results = [.. results], Updated = Now }; Store.Put("task", task.Id, task);
+                foreach (var (charts, inputs) in plan)
+                {
+                    token.ThrowIfCancellationRequested();
+                    try
+                    {
+                        foreach (var input in await SongInputs(snapshot, catalog, master, charts, token))
                         {
                             var id = ChartSite.ChartId(input.MusicId, input.Difficulty);
-                            try { site.Build(input); results.Add(new(id, id, null)); }
+                            try { site.Build(input with { Inputs = inputs[id] }); results.Add(new(id, id, null)); }
                             catch (Exception e) when (e is not OperationCanceledException) { results.Add(new(id, null, e.Message)); }
                         }
                     }
                     catch (Exception e) when (e is not OperationCanceledException)
                     {
-                        results.AddRange(song.Select(c => new ItemResult(ChartSite.ChartId(c.MusicId, c.Difficulty), null, e.Message)));
+                        results.AddRange(charts.Select(c => new ItemResult(ChartSite.ChartId(c.MusicId, c.Difficulty), null, e.Message)));
                     }
-                    Console.Error.WriteLine($"[chart-site] music {song.Key}: {results.Count}/{charts.Count} charts, {results.Count(r => r.Error != null)} failed");
+                    Console.Error.WriteLine($"[chart-site] music {charts[0].MusicId}: {results.Count}/{total} charts, {results.Count(r => r.Error != null)} failed");
                     task = task with { Completed = results.Count, Results = [.. results], Updated = Now }; Store.Put("task", task.Id, task);
                 }
                 var index = site.WriteIndex();
@@ -124,6 +150,58 @@ public sealed partial class AssetService
             tables[name] = (node is JsonObject o ? o["_allData"] : node) as JsonArray ?? throw new InvalidDataException($"{name}: no rows");
         }
         return tables;
+    }
+
+    /// <summary>
+    /// What each chart of one song is built from, hashed: the build version, static base and locale, the master rows, and
+    /// the published score, BGM (with the cue sheet's plaintext sources, which hold its ACB) and jacket.
+    /// </summary>
+    private async Task<Dictionary<string, string>> ChartInputs(Snapshot snapshot, Catalog catalog, Dictionary<string, JsonArray> master, List<ChartMaster.Chart> charts, string baseIdentity, CancellationToken token)
+    {
+        static string Files(Manifest export) => string.Join(',', export.Files.Select(f => f.Sha256));
+        var song = ChartMaster.Song(master, charts[0].MusicId, snapshot.Locale);
+        var bgm = await ExportKey(snapshot, catalog, $"Cri/Sound/{song.Sheet}", token);
+        string[] common = [ChartSite.BuildVersion.ToString(CultureInfo.InvariantCulture), baseIdentity, snapshot.Locale, Json.Write(song),
+            Files(bgm), string.Join(',', bgm.Sources.Select(s => s.PlainSha256 ?? s.DownloadSha256)),
+            Files(await ExportKey(snapshot, catalog, $"Image/Jacket/{song.Jacket}", token))];
+        var inputs = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var chart in charts)
+            inputs[ChartSite.ChartId(chart.MusicId, chart.Difficulty)] = Crypto.Identity([.. common, Json.Write(chart), Files(await ExportKey(snapshot, catalog, $"Live/MusicScore/{chart.ScoreFile}", token))]);
+        return inputs;
+    }
+
+    private void RequestChartSite(string reason)
+    {
+        if (!ChartSiteConfigured || shutdown.IsCancellationRequested) return;
+        Interlocked.Increment(ref pendingChartRequests); chartRequests.Writer.TryWrite(reason);
+    }
+
+    private async Task RunAutomaticChartSite()
+    {
+        try
+        {
+            while (await chartRequests.Reader.WaitToReadAsync(shutdown.Token))
+            {
+                var reasons = new List<string>();
+                while (chartRequests.Reader.TryRead(out var reason)) reasons.Add(reason);
+                try
+                {
+                    var task = StartChartSite(new());
+                    Console.Error.WriteLine($"[chart-site] automatic build {task.Id} after {string.Join(", ", reasons)}");
+                    LastAutomaticChartSite = await Wait(task.Id, shutdown.Token);
+                }
+                catch (Exception e) when (!shutdown.IsCancellationRequested) { Console.Error.WriteLine($"[chart-site] automatic build after {string.Join(", ", reasons)} failed to start: {e.Message}"); }
+                finally { Interlocked.Add(ref pendingChartRequests, -reasons.Count); }
+            }
+        }
+        catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { }
+    }
+
+    /// <summary>Waits until every requested automatic build has run; returns the last one (null if none ran).</summary>
+    public async Task<TaskInfo?> WaitAutomaticChartSite()
+    {
+        while (Volatile.Read(ref pendingChartRequests) > 0) await Task.Delay(200);
+        return LastAutomaticChartSite;
     }
 
     /// <summary>What each chart of one song needs, from the song's exports in the snapshot.</summary>

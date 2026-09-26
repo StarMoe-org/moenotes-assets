@@ -57,8 +57,10 @@ try
         using var stop = cancellation.Token.Register(() => { foreach (var r in waiting) service.CancelBatch(r.Batch!); });
         var releases = new List<Release>();
         foreach (var r in waiting) releases.Add(await service.WaitRelease(r.Release!));
-        Console.WriteLine(Json.Write(new { check, releases }));
-        return releases.Any(r => r.State == "cancelled") ? 130 : releases.All(r => r.State == "succeeded") && check.Regions.All(r => r.Error == null) ? 0 : 1;
+        var chartSite = await service.WaitAutomaticChartSite(); // requested by a completed release or a master change
+        Console.WriteLine(Json.Write(new { check, releases, chart_site = chartSite }));
+        return releases.Any(r => r.State == "cancelled") ? 130
+            : releases.All(r => r.State == "succeeded") && check.Regions.All(r => r.Error == null) && chartSite?.State is null or "succeeded" ? 0 : 1;
     }
     TaskInfo task;
     if (args[0] == "refresh") task = service.StartRefresh();

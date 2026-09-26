@@ -232,6 +232,8 @@ rewritten: `current_version.json` (latest completed release per region, plus pen
 and `diff/{locale}.json`, which compares published files with the previous release.
 `POST /versions/check[?force=true]` (administrative) checks at once;
 `update CONFIG.toml [--force]` does the same from the CLI and waits for queued releases.
+With the chart site configured, a completed release of the default region, or a master data change at the same
+resource version, also rebuilds the charts whose score, BGM, jacket or master rows changed (and adds new songs).
 The first detection on an empty store unpacks every tracked region in full.
 
 ## One-request all-language processing

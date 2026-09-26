@@ -18,7 +18,8 @@ public sealed record ReleaseLocale(string Locale, string State, string? Snapshot
 public sealed record Release(string Id, long Sequence, string Region, string MetadataRegion, string ResourceVersion, string CdnRoot,
     string? ClientVersion, string? MasterVersion, string? VerifiedAt, string BatchId, string State, long Detected, ReleaseLocale[] Locales,
     long? Completed = null, string? Previous = null);
-// Action: queued, pending (already queued), current, cancelled, untracked, missing, invalid or error (see Error).
+// Action: queued, pending (already queued), current, master (master data changed at the same resource version),
+// cancelled, untracked, missing, invalid or error (see Error).
 public sealed record VersionCheckRegion(string Region, string? MetadataRegion, string Action, string? ResourceVersion = null,
     string? Release = null, string? Batch = null, string? Error = null);
 public sealed record VersionCheck(string Url, long Checked, VersionCheckRegion[] Regions);
@@ -112,6 +113,15 @@ public sealed partial class AssetService
                 if (latest != null && latest.ResourceVersion == entry.ResourceVersion && latest.CdnRoot == entry.CdnRoot && (latest.State == "queued" || (!force && latest.State != "failed")))
                 {
                     var action = latest.State switch { "queued" => "pending", "cancelled" => "cancelled", _ => "current" };
+                    // Master data changes without a resource version (songs unlocked by master rows alone): record it and
+                    // rebuild the chart site. A pending release requests that build when it completes.
+                    if (action == "current" && entry.MasterVersion != null && entry.MasterVersion != latest.MasterVersion)
+                    {
+                        Store.Put("release", latest.Id, latest with { MasterVersion = entry.MasterVersion, ClientVersion = entry.ClientVersion ?? latest.ClientVersion, VerifiedAt = entry.VerifiedAt ?? latest.VerifiedAt });
+                        Console.Error.WriteLine($"[versions] {region} master {latest.MasterVersion ?? "none"} -> {entry.MasterVersion} at resource_version {entry.ResourceVersion}");
+                        if (region == Config.Region) RequestChartSite($"{region} master {entry.MasterVersion}");
+                        action = "master";
+                    }
                     results.Add(new(region, name, action, entry.ResourceVersion, latest.Id, latest.BatchId)); continue;
                 }
                 // Held under releaseGate until the release is stored, so a batch that ends at once still finds it.
@@ -124,7 +134,7 @@ public sealed partial class AssetService
                 Console.Error.WriteLine($"[versions] {region} resource_version {entry.ResourceVersion} ({name}, was {latest?.ResourceVersion ?? "none"}) queued batch {batch.Id} from {entry.CdnRoot}");
                 results.Add(new(region, name, "queued", entry.ResourceVersion, id, batch.Id));
             }
-            if (results.Any(r => r.Action == "queued")) WriteVersionFiles();
+            if (results.Any(r => r.Action is "queued" or "master")) WriteVersionFiles();
         }
         return new(Config.VersionUrl, Now, [.. results]);
     }
@@ -193,6 +203,10 @@ public sealed partial class AssetService
             {
                 if (GetRelease(release.Id) is not { State: "queued" } live || live.BatchId != batchId) return;
                 release = release with { State = state, Completed = Now, Locales = [.. locales], Previous = history.FirstOrDefault(r => r.State is "succeeded" or "partial")?.ResourceVersion };
+                // The chart site follows the default region's default language (StartChartSite's snapshot). Requested before
+                // the release is stored, so a caller that sees it finalized also sees the pending build.
+                if (release.Region == Config.Region && release.Locales.Any(l => l.Locale == Config.ForRegion().Locale && l.State is "succeeded" or "partial"))
+                    RequestChartSite($"{release.Region} resource_version {release.ResourceVersion}");
                 Store.Put("release", release.Id, release);
                 WriteVersionFiles();
             }

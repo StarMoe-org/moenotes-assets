@@ -126,3 +126,8 @@ changes require explicit release notes; a frozen stable API is not claimed.
   `{region}/{resource_version}/release.json` and `diff/{locale}.json`, which compares published files by content
   against the previous release (added, changed, removed, failed). `allow_insecure_version_url` permits a plain HTTP
   `version_url` for a metadata service reachable only inside a cluster network; CDN roots stay HTTPS-only.
+- Rebuild stale charts: built chart manifests record `inputs`, a hash of the build version, static base, master rows
+  and the published score, BGM (with its cue sheet source) and jacket; a chart-site build also composes charts whose
+  inputs changed, so existing charts are rebuilt once. With version tracking, a completed release of the default region,
+  or a master data change at the same resource version (recorded on the release, check action `master`), starts a
+  chart-site build; requests during a build are coalesced. `update` waits for it and prints it as `chart_site`.

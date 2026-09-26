@@ -92,6 +92,10 @@ public sealed class ChartSiteTests
 
         var png = SamplePng;
         var manifest = site.Build(SampleInput());
+        // Built without recorded inputs: stale against any inputs; base charts are never rebuilt.
+        Assert.True(site.NeedsBuild("100009_hard", false, "inputs"));
+        Assert.False(site.NeedsBuild("100009_hard", false));
+        Assert.False(site.NeedsBuild("100001_expert", false, "inputs"));
         var files = manifest["files"]!.AsObject();
 
         Assert.Equal(new[] { "audio/BGM_song/bgm_song.m4a", "audio/SE/tap.flac", "audio/live-audio.json", "live.json", "livenotes/notes.json",
@@ -169,7 +173,8 @@ public sealed class ChartSiteTests
         Assert.True(site.IsPackage);
         Assert.Empty(site.ImportBase());
         Assert.True(site.NeedsBuild("100001_expert", false));
-        var manifest = site.Build(SampleInput() with { Layers = [new("m4a-bytes"u8.ToArray(), 47990, 48000, 2, 1024)] });
+        var manifest = site.Build(SampleInput() with { Layers = [new("m4a-bytes"u8.ToArray(), 47990, 48000, 2, 1024)], Inputs = "inputs-1" });
+        Assert.Equal("inputs-1", (string?)manifest["inputs"]);
         foreach (var (_, entry) in manifest["files"]!.AsObject())
             foreach (var asset in entry!["parts"] is JsonArray parts ? parts.Select(p => (string)p![1]!) : [(string)entry["asset"]!])
                 Assert.True(File.Exists(Path.Combine(site.Root, asset)), asset);
@@ -180,6 +185,8 @@ public sealed class ChartSiteTests
         Assert.Equal(1, (int)site.WriteIndex()["charts"]!);
         Assert.False(site.NeedsBuild("100009_hard", false));
         Assert.True(site.NeedsBuild("100009_hard", true));
+        Assert.False(site.NeedsBuild("100009_hard", false, "inputs-1"));
+        Assert.True(site.NeedsBuild("100009_hard", false, "inputs-2")); // another score, BGM, jacket or master rows
 
         void Bad(string name, string text)
         {
