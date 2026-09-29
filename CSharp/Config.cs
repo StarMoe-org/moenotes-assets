@@ -53,6 +53,8 @@ public sealed record Config
     // Plain HTTP for version_url only (a metadata service reachable solely inside a cluster network, e.g.
     // http://metadata.namespace.svc.cluster.local/current_version.json). CDN roots in its document are still HTTPS.
     public bool AllowInsecureVersionUrl { get; init; }
+    public string JpApiOrigin { get; init; } = "https://api.bang-dream-on.jp";
+    public string JpCdnOrigin { get; init; } = "https://static.bang-dream-on.jp";
     public static Config Load(string path)
     {
         var table = Toml.ToModel(File.ReadAllText(path));
@@ -94,6 +96,11 @@ public sealed record Config
         if (MasterRoot.Length > 0) _ = MasterUri();
         if (ChartBaseUrl.Length > 0) _ = ChartBaseUri();
         if (VersionUrl.Length > 0) _ = VersionUri();
+        foreach (var origin in new[] { JpApiOrigin, JpCdnOrigin })
+        {
+            var uri = (this with { CdnRoot = origin }).Root();
+            Require(uri.AbsolutePath == "/", "JP endpoints must be origins");
+        }
         Require(VersionPollSecs == 0 || VersionPollSecs is >= 60 and <= 86400, "version_poll_secs must be 0 or 60 to 86400");
         foreach (var name in Regions.Select(r => r.MetadataRegion).Append(MetadataRegion).OfType<string>())
             Require(name.Length <= 64 && name.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-'), "Invalid metadata_region");

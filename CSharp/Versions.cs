@@ -10,14 +10,14 @@ namespace MoenotesAssets;
 // language from the entry's cdnRoot and exports it. When the batch ends the release is finalized and data_dir/versions,
 // served at /versions/, is rewritten: current_version.json (latest completed release per region), index.json (all
 // releases), and per release {region}/{resource_version}/release.json and diff/{locale}.json against the previous one.
-public sealed record VersionEntry(string ResourceVersion, string CdnRoot, string? ClientVersion, string? MasterVersion, string? VerifiedAt);
+public sealed record VersionEntry(string ResourceVersion, string CdnRoot, string? ClientVersion, string? MasterVersion, string? VerifiedAt, JpAssetSource? Assets = null);
 public sealed record VersionDiffSummary(string From, string FromSnapshot, int Added, int Removed, int Changed, int Unchanged, int Failed);
 public sealed record ReleaseLocale(string Locale, string State, string? Snapshot = null, string? CatalogSha256 = null, string? ExportTask = null,
     int Total = 0, int Exported = 0, int Skipped = 0, int Failed = 0, int Reused = 0, VersionDiffSummary? Diff = null);
 // State is queued until the batch ends, then succeeded, partial, failed or cancelled.
 public sealed record Release(string Id, long Sequence, string Region, string MetadataRegion, string ResourceVersion, string CdnRoot,
     string? ClientVersion, string? MasterVersion, string? VerifiedAt, string BatchId, string State, long Detected, ReleaseLocale[] Locales,
-    long? Completed = null, string? Previous = null);
+    long? Completed = null, string? Previous = null, JpAssetSource? Assets = null);
 // Action: queued, pending (already queued), current, master (master data changed at the same resource version),
 // cancelled, untracked, missing, invalid or error (see Error).
 public sealed record VersionCheckRegion(string Region, string? MetadataRegion, string Action, string? ResourceVersion = null,
@@ -68,6 +68,8 @@ public sealed partial class AssetService
     private Release[] Releases() => Store.All<Release>("release").OrderBy(r => r.Sequence).ToArray();
     /// <summary>The CDN roots of the region's latest detected release, which refreshes follow instead of cdn_root.</summary>
     private string? ReleaseCdnRoot(string region) => Config.MetadataRegionFor(region) == null ? null : Releases().LastOrDefault(r => r.Region == region)?.CdnRoot;
+    private JpAssetSource? ReleaseAssets(string region) => Config.MetadataRegionFor(region) == null ? null : Releases().LastOrDefault(r => r.Region == region)?.Assets;
+    private static string ReleasePath(Release release) => release.ResourceVersion + (release.Assets == null ? "" : "-" + release.Assets.Hash);
 
     /// <summary>Checks version_url now and every version_poll_secs while serving; a failed check is logged and retried on the next tick.</summary>
     public void EnableVersionPolling()
@@ -109,8 +111,10 @@ public sealed partial class AssetService
                 VersionEntry entry;
                 try { entry = ParseEntry(node); }
                 catch (InvalidDataException e) { results.Add(new(region, name, "invalid", Error: e.Message)); continue; }
+                catch (Exception e) when (e is JsonException or InvalidOperationException or NullReferenceException)
+                { results.Add(new(region, name, "invalid", Error: "Invalid resource metadata")); continue; }
                 var latest = Releases().LastOrDefault(r => r.Region == region);
-                if (latest != null && latest.ResourceVersion == entry.ResourceVersion && latest.CdnRoot == entry.CdnRoot && (latest.State == "queued" || (!force && latest.State != "failed")))
+                if (latest != null && latest.ResourceVersion == entry.ResourceVersion && latest.CdnRoot == entry.CdnRoot && latest.Assets == entry.Assets && (latest.State == "queued" || (!force && latest.State != "failed")))
                 {
                     var action = latest.State switch { "queued" => "pending", "cancelled" => "cancelled", _ => "current" };
                     // Master data changes without a resource version (songs unlocked by master rows alone): record it and
@@ -125,12 +129,13 @@ public sealed partial class AssetService
                     results.Add(new(region, name, action, entry.ResourceVersion, latest.Id, latest.BatchId)); continue;
                 }
                 // Held under releaseGate until the release is stored, so a batch that ends at once still finds it.
-                var id = region + ":" + entry.ResourceVersion;
+                var id = region + ":" + entry.ResourceVersion + (entry.Assets == null ? "" : ":" + entry.Assets.Hash);
                 BatchInfo batch;
-                try { batch = StartBatch(new(region), entry.CdnRoot, id); }
+                try { batch = StartBatch(new(region), entry.CdnRoot, id, entry.Assets); }
                 catch (ApiException e) { results.Add(new(region, name, "error", entry.ResourceVersion, Error: e.Message)); continue; } // queue full: next check
+                catch (InvalidDataException e) { results.Add(new(region, name, "invalid", entry.ResourceVersion, Error: e.Message)); continue; }
                 Store.Put("release", id, new Release(id, batch.Sequence, region, name, entry.ResourceVersion, entry.CdnRoot, entry.ClientVersion,
-                    entry.MasterVersion, entry.VerifiedAt, batch.Id, "queued", Now, []));
+                    entry.MasterVersion, entry.VerifiedAt, batch.Id, "queued", Now, [], Assets: entry.Assets));
                 Console.Error.WriteLine($"[versions] {region} resource_version {entry.ResourceVersion} ({name}, was {latest?.ResourceVersion ?? "none"}) queued batch {batch.Id} from {entry.CdnRoot}");
                 results.Add(new(region, name, "queued", entry.ResourceVersion, id, batch.Id));
             }
@@ -145,6 +150,24 @@ public sealed partial class AssetService
         static string? Text(JsonNode? node) => node is JsonValue value && value.TryGetValue<string>(out var text) && text.Length is > 0 and <= 2048 ? text : null;
         var version = Text(entry["resource_version"]) ?? throw new InvalidDataException("resource_version missing");
         Require(version.Length <= 64 && char.IsAsciiLetterOrDigit(version[0]) && !version.Contains("..") && version.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-'), "Invalid resource_version");
+        if (Text(entry["resource_version_source"]) == "x-asset-version" || Text(entry["assets"]?["provider"]) == "jp")
+        {
+            var client = Text(entry["client_version"]) ?? throw new InvalidDataException("JP client_version missing");
+            var hash = Text(entry["resource_hash"]) ?? throw new InvalidDataException("JP resource_hash missing");
+            var cdn = Text(entry["upstream"]?["cdn_root"]) ?? throw new InvalidDataException("JP CDN origin missing");
+            var api = Text(entry["upstream"]?["api_root"]) ?? throw new InvalidDataException("JP API origin missing");
+            JpAssetSource source;
+            try
+            {
+                var root = cdn.TrimEnd('/') + $"/asset/{version}/Android/{hash}";
+                source = entry["assets"] == null ? new("jp", "Android", version, hash, root + "/catalog_main.bin", root, api, client)
+                    : entry["assets"]!.Deserialize<JpAssetSource>(Json.Options) ?? throw new InvalidDataException("JP assets missing");
+                source.Validate(Config);
+                Require(source.Version == version && source.Hash == hash && source.ClientVersion == client && source.ApiRoot == api && cdn.TrimEnd('/') == Config.JpCdnOrigin.TrimEnd('/'), "Inconsistent JP assets metadata");
+            }
+            catch (Exception e) when (e is JsonException or InvalidOperationException or NullReferenceException) { throw new InvalidDataException("Invalid JP assets metadata"); }
+            return new(version, cdn.TrimEnd('/'), client, Text(entry["version"]), Text(entry["verified_at"]), source);
+        }
         var roots = (Text((entry["server"] as JsonObject)?["cdnRoot"]) ?? throw new InvalidDataException("server.cdnRoot missing")).Split('|', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
         Require(roots.Length is > 0 and <= 4, "Invalid server.cdnRoot");
         foreach (var root in roots) _ = (Config with { CdnRoot = root }).Root();
@@ -228,13 +251,13 @@ public sealed partial class AssetService
         var manifests = Store.Exports(after.Where(p => before.GetValueOrDefault(p.Key) != p.Value)
             .SelectMany(p => before.TryGetValue(p.Key, out var old) ? new[] { p.Value, old } : new[] { p.Value }));
         var diff = VersionDiff.Compute(before, after, manifests, task.Results.Where(r => r.Error != null).ToArray());
-        WriteStatic(Path.Combine(VersionsRoot, release.Region, release.ResourceVersion, "diff", locale.Locale + ".json"), new
+        WriteStatic(Path.Combine(VersionsRoot, release.Region, ReleasePath(release), "diff", locale.Locale + ".json"), new
         {
             schema_version = 1,
             region = release.Region,
             locale = locale.Locale,
-            from = new { resource_version = from.ResourceVersion, snapshot = previous.Snapshot },
-            to = new { resource_version = release.ResourceVersion, snapshot = locale.Snapshot },
+            from = new { resource_version = from.ResourceVersion, resource_hash = from.Assets?.Hash, snapshot = previous.Snapshot },
+            to = new { resource_version = release.ResourceVersion, resource_hash = release.Assets?.Hash, snapshot = locale.Snapshot },
             summary = new { added = diff.Added.Length, changed = diff.Changed.Length, removed = diff.Removed.Length, unchanged = diff.Unchanged, failed = diff.Failed.Length },
             diff.Added,
             diff.Changed,
@@ -248,7 +271,7 @@ public sealed partial class AssetService
     private void WriteVersionFiles()
     {
         var releases = Releases(); if (releases.Length == 0) return;
-        foreach (var release in releases.Where(r => r.Completed != null)) WriteStatic(Path.Combine(VersionsRoot, release.Region, release.ResourceVersion, "release.json"), View(release));
+        foreach (var release in releases.Where(r => r.Completed != null)) WriteStatic(Path.Combine(VersionsRoot, release.Region, ReleasePath(release), "release.json"), View(release));
         var updated = Time(Now);
         WriteStatic(Path.Combine(VersionsRoot, "current_version.json"), new
         {
@@ -258,6 +281,7 @@ public sealed partial class AssetService
             pending = releases.Where(r => r.State == "queued").GroupBy(r => r.Region).ToDictionary(g => g.Key, g => g.Select(r => new
             {
                 r.ResourceVersion,
+                resource_hash = r.Assets?.Hash,
                 state = Store.Get<BatchInfo>("batch", r.BatchId)?.State ?? "queued",
                 detected_at = Time(r.Detected),
             }).ToArray(), StringComparer.Ordinal),
@@ -273,6 +297,8 @@ public sealed partial class AssetService
     private static object View(Release r) => new
     {
         r.ResourceVersion,
+        resource_hash = r.Assets?.Hash,
+        r.Assets,
         r.ClientVersion,
         r.MasterVersion,
         r.MetadataRegion,
@@ -282,7 +308,7 @@ public sealed partial class AssetService
         completed_at = r.Completed is { } completed ? Time(completed) : null,
         verified_at = r.VerifiedAt,
         r.Previous,
-        release = $"/versions/{r.Region}/{r.ResourceVersion}/release.json",
+        release = $"/versions/{r.Region}/{ReleasePath(r)}/release.json",
         locales = r.Locales.ToDictionary(l => l.Locale, l => new
         {
             l.State,
@@ -293,7 +319,7 @@ public sealed partial class AssetService
             l.Skipped,
             l.Failed,
             l.Reused,
-            diff = l.Diff is not { } d ? null : new { d.From, d.FromSnapshot, d.Added, d.Changed, d.Removed, d.Unchanged, d.Failed, url = $"/versions/{r.Region}/{r.ResourceVersion}/diff/{l.Locale}.json" },
+            diff = l.Diff is not { } d ? null : new { d.From, d.FromSnapshot, d.Added, d.Changed, d.Removed, d.Unchanged, d.Failed, url = $"/versions/{r.Region}/{ReleasePath(r)}/diff/{l.Locale}.json" },
         }, StringComparer.Ordinal),
     };
 

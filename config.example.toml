@@ -68,3 +68,16 @@ allow_loopback_http = false
 # bili_version = "main"
 # Entry name in version_url's document (default: id; "" leaves the region untracked).
 # metadata_region = "hk-tw-mo"
+
+# JP: add this to an existing regions array (also keep an entry for the default region).
+# Or use region="jp", locale="ja", locales=["ja"] and its cdn_root at the top level.
+# Requires version_url; run `update` / POST /versions/check before the first manual refresh.
+# [[regions]]
+# id = "jp"
+# cdn_root = "https://static.bang-dream-on.jp"
+# locale = "ja"
+# locales = ["ja"]
+# metadata_region = "jp"
+# The trusted JP API/CDN origins have official defaults. Override only at top level:
+# jp_api_origin = "https://api.bang-dream-on.jp"
+# jp_cdn_origin = "https://static.bang-dream-on.jp"

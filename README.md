@@ -22,7 +22,7 @@ dotnet run --project CSharp -c Release --no-build -- serve config.toml
 
 The listener defaults to `127.0.0.1:8091`. All configuration fields are validated;
 unknown TOML keys fail at startup. `cdn_root`, region, locale and resource version
-are explicit; server discovery and game authentication are not implemented.
+are explicit. JP uses anonymous Version to obtain CDN download authentication; player login is not implemented.
 
 Set the **`MOENOTES_API_KEY` environment variable** before starting the HTTP server.
 All POST requests, task queries and storage statistics require
@@ -257,3 +257,11 @@ restart while completed steps/exports are reused. Failed languages do not stop
 the remaining languages. Direct single-language endpoints retain their existing
 concurrency behavior. Zeabur logs show batch language/phase and throttled export
 progress with success/failure counts. See [API](docs/API.md) for limits and details.
+
+## JP assets
+
+The metadata service's JP entry supplies the selected Android resource version, hash,
+client version and public download paths. The unpacker calls anonymous
+`MasterdataService/Version` itself and keeps the resulting CDN Basic credential in
+memory. No player account or private metadata endpoint is needed. See
+[JP integration](docs/JP_ASSETS.md) for configuration, version consistency and validation.

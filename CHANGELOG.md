@@ -20,6 +20,10 @@ changes require explicit release notes; a frozen stable API is not claimed.
 
 ## 0.2.0-csharp (unreleased)
 
+- Retrieve JP Android assets from metadata-provided version/hash paths, with
+  anonymous Version authentication, gzip catalogs and RemoteAssetDir expansion.
+  Keep CDN credentials in memory and preserve hash-only release updates.
+
 - Add the Live2D model site (`model-site`, `POST /model-site/build`, served with the chart site at `/chart-site/`):
   every `Character/Live2D/…/model/…` key built for the ournotes-player Live2D viewer (`models.json`,
   `models/<id>.json`), a port of nnnotes `web --live2d` whose JSON, moc3 and GLSL are byte-identical to nnnotes' on all

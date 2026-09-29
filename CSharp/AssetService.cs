@@ -188,12 +188,15 @@ public sealed partial class AssetService : IAsyncDisposable
     /// Refreshes one catalog from <paramref name="cdnRoots"/> ("a|b": mirrors tried in order), else from the region's
     /// latest detected release (Versions.cs), else from the configured cdn_root. The snapshot records the root that answered.
     /// </summary>
-    public TaskInfo StartRefresh(string? region = null, string? locale = null, string? version = null, string? cdnRoots = null) => Start("catalog_refresh", null, 1, async (task, token) =>
+    public TaskInfo StartRefresh(string? region = null, string? locale = null, string? version = null, string? cdnRoots = null, JpAssetSource? assets = null) => Start("catalog_refresh", null, 1, async (task, token) =>
     {
         await refresh.WaitAsync(token);
         try
         {
             var selected = Config.ForRegion(region, locale, version);
+            assets ??= ReleaseAssets(selected.Region);
+            Require(assets != null || Config.MetadataRegionFor(selected.Region) != "jp" && selected.Region != "jp", "Discover JP assets with a version check before refreshing");
+            if (assets != null) { assets.Validate(Config); Require(selected.Locale is "" or "ja", "JP requires locale ja or empty"); }
             var roots = (cdnRoots ?? ReleaseCdnRoot(selected.Region) ?? selected.CdnRoot).Split('|');
             string hash; byte[] bytes;
             for (var i = 0; ; i++)
@@ -201,9 +204,18 @@ public sealed partial class AssetService : IAsyncDisposable
                 selected = selected with { CdnRoot = roots[i] };
                 try
                 {
-                    hash = new UTF8Encoding(false, true).GetString(await Fetch(selected.CatalogUri("hash"), 65536, token)).Trim();
-                    Require(hash.Length <= 128, "Invalid catalog hash");
-                    bytes = await Fetch(selected.CatalogUri("bin"), 32 << 20, token);
+                    if (assets != null)
+                    {
+                        hash = assets.Hash;
+                        selected = selected with { CdnRoot = Config.JpCdnOrigin.TrimEnd('/') };
+                        bytes = await Fetch(new Uri(assets.CatalogUrl), 32 << 20, token, assets);
+                    }
+                    else
+                    {
+                        hash = new UTF8Encoding(false, true).GetString(await Fetch(selected.CatalogUri("hash"), 65536, token)).Trim();
+                        Require(hash.Length <= 128, "Invalid catalog hash");
+                        bytes = await Fetch(selected.CatalogUri("bin"), 32 << 20, token);
+                    }
                     break;
                 }
                 catch (Exception e) when (i + 1 < roots.Length && !token.IsCancellationRequested)
@@ -214,7 +226,8 @@ public sealed partial class AssetService : IAsyncDisposable
 
             var digest = Crypto.Sha256(bytes);
             var id = Crypto.Identity(selected.Region, selected.Locale, selected.BiliVersion, selected.CdnRoot, digest);
-            var snapshot = new Snapshot(id, digest, selected.Region, selected.Locale, selected.BiliVersion, selected.CdnRoot, hash, Now);
+            if (assets != null) id = Crypto.Identity(id, assets.Version, assets.Hash, assets.BundleRoot);
+            var snapshot = new Snapshot(id, digest, selected.Region, selected.Locale, selected.BiliVersion, selected.CdnRoot, hash, Now, assets);
             var target = Path.Combine(Config.DataDir, "catalogs", digest + ".bin");
             token.ThrowIfCancellationRequested();
             if (!File.Exists(target))
@@ -228,10 +241,10 @@ public sealed partial class AssetService : IAsyncDisposable
         }
         finally { refresh.Release(); }
     });
-    private async Task<byte[]> Fetch(Uri uri, int limit, CancellationToken token)
+    private async Task<byte[]> Fetch(Uri uri, int limit, CancellationToken token, JpAssetSource? assets = null)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token); timeout.CancelAfter(TimeSpan.FromSeconds(Config.DownloadTimeoutSecs));
-        using var response = await http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+        using var response = await SendAsset(uri, assets, true, timeout.Token);
         Require(response.StatusCode == HttpStatusCode.OK, $"CDN HTTP {(int)response.StatusCode}");
         Require(response.Content.Headers.ContentLength is null || response.Content.Headers.ContentLength <= limit, "Response size limit");
         await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
@@ -309,9 +322,9 @@ public sealed partial class AssetService : IAsyncDisposable
             Require(options.Size > 0 && options.Size <= Config.InputBytes, "Input size budget");
             directory = Path.Combine(Config.DataDir, "tmp", "download-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(directory);
             var path = Path.Combine(directory, "payload");
-            var uri = (Config with { CdnRoot = snapshot.CdnRoot }).AssetUri(location.Internal);
+            var uri = snapshot.Assets?.AssetUri(location.Internal) ?? (Config with { CdnRoot = snapshot.CdnRoot }).AssetUri(location.Internal);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token); timeout.CancelAfter(TimeSpan.FromSeconds(Config.DownloadTimeoutSecs));
-            using var response = await http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            using var response = await SendAsset(uri, snapshot.Assets, false, timeout.Token);
             Require(response.StatusCode == HttpStatusCode.OK, $"CDN HTTP {(int)response.StatusCode}");
             Require(response.Content.Headers.ContentLength is null || response.Content.Headers.ContentLength == options.Size, "Content-Length mismatch");
             await using var source = await response.Content.ReadAsStreamAsync(timeout.Token);

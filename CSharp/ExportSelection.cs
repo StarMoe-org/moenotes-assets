@@ -29,7 +29,7 @@ public static class ExportSelection
         if (!Supported(target)) return $"Unsupported export type: {target.ResourceType}";
         var dependencies = Dependencies(catalog, key);
         if (dependencies.Any(l => l.Provider == Catalog.Cri) && (target.Provider == Catalog.Cri || target.ResourceType.StartsWith("CriWare.", StringComparison.Ordinal))) dependencies = dependencies.Where(l => l.Provider == Catalog.Cri).ToArray();
-        var local = dependencies.FirstOrDefault(l => !Uri.TryCreate(l.Internal, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"));
+        var local = dependencies.FirstOrDefault(l => !Catalog.IsRemote(l.Internal));
         return local == null ? null : $"Unsupported local dependency: {local.Internal}";
     }
 

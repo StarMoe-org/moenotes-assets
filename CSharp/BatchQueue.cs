@@ -6,7 +6,7 @@ public sealed record BatchRequest(string? Region = null, string[]? Locales = nul
 public sealed record BatchStep(string Locale, string Phase, string State = "queued", string? TaskId = null, string? Snapshot = null, string? Error = null);
 // CdnRoot and Release are set for a release detected by version tracking (Versions.cs): refreshes use its roots.
 public sealed record BatchInfo(string Id, long Sequence, string Region, string Version, string Prefix, string State,
-    BatchStep[] Steps, long Created, long Updated, string? CdnRoot = null, string? Release = null);
+    BatchStep[] Steps, long Created, long Updated, string? CdnRoot = null, string? Release = null, JpAssetSource? Assets = null);
 
 public sealed partial class AssetService
 {
@@ -31,13 +31,16 @@ public sealed partial class AssetService
         batchRunner = Task.Run(ProcessBatches);
     }
 
-    public BatchInfo StartBatch(BatchRequest request, string? cdnRoot = null, string? release = null)
+    public BatchInfo StartBatch(BatchRequest request, string? cdnRoot = null, string? release = null, JpAssetSource? assets = null)
     {
         var scope = Config.ForRegion(request.Region);
+        assets ??= ReleaseAssets(scope.Region);
+        if (assets != null) { assets.Validate(Config); Require(scope.Locale is "" or "ja", "JP requires locale ja or empty"); }
         var languages = request.Locales ?? (scope.Locales.Length > 0 ? scope.Locales : [scope.Locale]);
         Require(languages is { Length: > 0 and <= 64 } && languages.All(l => l != null), "Select 1 to 64 locales");
         Require(request.Prefix != null && request.Prefix.Length <= 4096, "Invalid prefix");
         languages = languages.Distinct(StringComparer.Ordinal).ToArray();
+        Require(assets == null || languages.All(l => l is "" or "ja") && languages.Length == 1, "JP has one catalog without language suffix");
         foreach (var language in languages) _ = Config.ForRegion(scope.Region, language);
         lock (batchGate)
         {
@@ -48,7 +51,7 @@ public sealed partial class AssetService
                 ? new[] { new BatchStep(l, "refresh"), new BatchStep(l, "export") }
                 : new[] { new BatchStep(l, "refresh") }).ToArray();
             var batch = new BatchInfo(Guid.NewGuid().ToString("N"), ++batchSequence, scope.Region, scope.BiliVersion,
-                request.Prefix!, "queued", steps, Now, Now, cdnRoot, release);
+                request.Prefix!, "queued", steps, Now, Now, cdnRoot, release, assets);
             Store.Put("batch", batch.Id, batch);
             Console.Error.WriteLine($"[batch {batch.Id}] queued sequence={batch.Sequence} region={batch.Region} steps={steps.Length}");
             batchChannel.Writer.TryWrite(batch.Id);
@@ -170,7 +173,7 @@ public sealed partial class AssetService
                         lock (batchGate)
                         {
                             token.ThrowIfCancellationRequested();
-                            child = step.Phase == "refresh" ? StartRefresh(batch.Region, step.Locale, batch.Version, batch.CdnRoot)
+                            child = step.Phase == "refresh" ? StartRefresh(batch.Region, step.Locale, batch.Version, batch.CdnRoot, batch.Assets)
                                 : StartExport(new(Prefix: batch.Prefix, Snapshot: step.Snapshot));
                             step = step with { State = "running", TaskId = child.Id };
                             SaveStep(id, index, step);

@@ -130,7 +130,7 @@ public sealed partial class Store
                 Config.Require(catalog != null, "Catalog graph required for a new content digest");
 
                 var bundleLocations = catalog!.Locations.Values.Where(l => l.Options != null).GroupBy(BundleIdentity.Id).Select(g => g.First()).ToArray();
-                bool Remote(Location l) => Uri.TryCreate(l.Internal, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
+                bool Remote(Location l) => Catalog.IsRemote(l.Internal);
                 Execute("INSERT INTO catalog_data VALUES($c,$b,$a,$bytes,$r)", ("$c", snapshot.ContentSha256), ("$b", bundleLocations.Length), ("$a", catalog.Keys.Count), ("$bytes", bundleLocations.Sum(l => l.Options!.Size)), ("$r", bundleLocations.Count(Remote)));
                 var content = ContentNumber(snapshot.ContentSha256);
                 using var bundle = Prepared("INSERT OR IGNORE INTO bundle_defs(id,key,bundle_name,internal,provider,resource_type,catalog_hash,crc,bytes,candidate_id,remote) VALUES($id,$key,$name,$internal,$provider,$type,$hash,$crc,$bytes,$candidate,$remote)", "$id", "$key", "$name", "$internal", "$provider", "$type", "$hash", "$crc", "$bytes", "$candidate", "$remote");

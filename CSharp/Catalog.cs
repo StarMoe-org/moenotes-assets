@@ -7,6 +7,8 @@ public sealed record BundleOptions(string Hash, string BundleName, uint Crc, lon
 public sealed record Location(uint Id, string Key, string Internal, string Provider, string ResourceType, List<uint> Dependencies, BundleOptions? Options);
 public sealed class Catalog
 {
+    public static bool IsRemote(string id) => id.StartsWith(JpAssetSource.Placeholder, StringComparison.Ordinal) ||
+        Uri.TryCreate(id, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
     public const string Crypt = "Fwk.Crypt.AssetBundleCryptProvider";
     public const string Plain = "UnityEngine.ResourceManagement.ResourceProviders.AssetBundleProvider";
     public const string Cri = "CriWare.Assets.CriResourceProvider";
@@ -115,6 +117,7 @@ public sealed class Catalog
     public static Catalog Parse(byte[] data)
     {
         Require(data.Length <= 32 << 20, "Catalog size limit");
+        data = BinaryTools.DecodeText(data, 32 << 20);
         var reader = new Reader(data);
         reader.Take(0, 32);
         Require(reader.U32(0) == 0x0de38942 && reader.U32(4) == 2, "Unsupported catalog format");
