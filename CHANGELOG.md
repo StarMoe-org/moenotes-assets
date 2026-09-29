@@ -20,6 +20,9 @@ changes require explicit release notes; a frozen stable API is not claimed.
 
 ## 0.2.0-csharp (unreleased)
 
+- The chart site takes songs the default region lacks from other `[[regions]]` with their own `master_root` (e.g. a
+  JP-only song), falls back to Japanese titles, and tags each chart with the servers that have it (`regions`).
+
 - Serve every configured region's exports at `/{region}/{locale}/{key}/…` (static tree `data/regions/`), beside the
   unchanged default-region `/{locale}/{key}/…`. The first start rebuilds the path trees in the background.
 

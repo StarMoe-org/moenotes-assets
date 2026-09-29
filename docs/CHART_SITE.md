@@ -57,7 +57,7 @@ are merged, so no note type of the new chart lacks a file. Only the changed part
 ```toml
 chart_base_url = "https://github.com/StarMoe-org/ournotes-player/releases/download/static-base-tw-1.0.1/ournotes-static-base-tw-1.0.1.zip"
 chart_base_sha256 = "ab6ee0103e32812be74e61735a5479b6403ceb624d96613d0e70dbd17b3cca7a"
-master_root = "https://metadata.bdon.moe/master"   # decoded MasterData: <root>/<Table>.json with _allData rows
+master_root = "https://metadata.bdon.moe/tw/master"   # decoded MasterData: <root>/<Table>.json with _allData rows
 # or, instead of the URL: chart_base = "/srv/static-base"  (a package directory or an nnnotes `web` site)
 ```
 
@@ -73,6 +73,30 @@ The task (`kind: chart_site`) reports one result per chart id. `charts.json` is 
 manifest references are removed. A new game version that changes the stage or notes needs a new package (a new
 release and sha256 in the configuration); new songs do not.
 
+## Several servers
+
+The site is one site for every server. The default region is its first source (the build's snapshot, top-level
+`master_root`); each other `[[regions]]` entry with its own `master_root` is a further source, at the current snapshot
+of its default locale (skipped until it has one):
+
+```toml
+[[regions]]
+id = "jp"
+cdn_root = "https://static.bang-dream-on.jp"
+locale = "ja"
+locales = ["ja"]
+metadata_region = "jp"
+master_root = "https://metadata.bdon.moe/jp/master"
+```
+
+Charts are keyed by `<musicId>_<difficulty>`. Each is taken from the first source whose MasterLiveMusic and
+MasterLiveMusicScore have it, so songs every server shares keep the default region's exports and a song only JP has
+is composed from the jp snapshot and master. Titles and band names use the build's locale and fall back to Japanese
+when that text is empty (untranslated server-only songs). Every chart records the sources that have it as
+`chart.regions` in its manifest and in `charts.json` (`["tw","en","kr","jp"]`, `["jp"]`); this tag is updated without
+composing the chart again. Only configured sources are listed: a region without `master_root` is not a source and not
+in the tag. Charts the sources no longer list are kept, as before.
+
 ## Stale charts and automatic builds
 
 Every chart built here records `inputs` in its manifest: a hash of the build version (`ChartSite.BuildVersion`), the
@@ -84,8 +108,9 @@ BGM, jacket, level or title rebuilds just the affected charts. Charts built befo
 rebuilt once. Charts taken from an nnnotes site are never rebuilt; `--force` still rebuilds every built chart.
 
 With version tracking (`version_url`, see [API](API.md)) and the chart site configured, builds start on their own:
-after a release of the default region whose default language succeeded or was partial, and when that region's
-master data version changes at an unchanged resource version (songs unlocked by master rows alone). Requests that
+after a release of the default region, or of another source region, whose default language succeeded or was
+partial, and when such a region's master data version changes at an unchanged resource version (songs unlocked by
+master rows alone). Only the default region's builds also rebuild the model site. Requests that
 arrive during a build are coalesced into one more build. Logs show `[chart-site] automatic build ID after …`; the CLI
 `update` waits for these builds and prints the last one as `chart_site`.
 

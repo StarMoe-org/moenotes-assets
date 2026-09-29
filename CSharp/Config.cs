@@ -93,7 +93,7 @@ public sealed record Config
         foreach (var origin in CorsOrigins)
             Require(origin == "*" || (Uri.TryCreate(origin, UriKind.Absolute, out var u) && u.Scheme is "http" or "https" && u.UserInfo.Length == 0 && u.AbsolutePath == "/" && u.Query.Length == 0 && u.Fragment.Length == 0 && !origin.EndsWith('/')), "CORS entries must be '*' or exact origins without trailing slash");
         foreach (var language in Locales) Require(language.Length <= 64 && language.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-'), "Invalid locale");
-        if (MasterRoot.Length > 0) _ = MasterUri();
+        foreach (var root in Regions.Select(r => r.MasterRoot).Append(MasterRoot).OfType<string>().Where(r => r.Length > 0)) _ = MasterUri(root);
         if (ChartBaseUrl.Length > 0) _ = ChartBaseUri();
         if (VersionUrl.Length > 0) _ = VersionUri();
         foreach (var origin in new[] { JpApiOrigin, JpCdnOrigin })
@@ -129,10 +129,17 @@ public sealed record Config
         var name = settings != null ? settings.MetadataRegion ?? region : MetadataRegion.Length > 0 ? MetadataRegion : region;
         return VersionUrl.Length == 0 || name.Length == 0 ? null : name;
     }
-    public Uri MasterUri()
+    /// <summary>
+    /// A region's decoded MasterData root for the chart site: its [[regions]] master_root, falling back to the top-level
+    /// master_root for the default region only; "" when the region does not contribute charts.
+    /// </summary>
+    public string MasterRootFor(string region) =>
+        Regions.FirstOrDefault(r => r.Id == region)?.MasterRoot is { Length: > 0 } root ? root : region == Region ? MasterRoot : "";
+    public Uri MasterUri(string? root = null)
     {
-        Require(!MasterRoot.Any(c => "\\%?#".Contains(c)), "Invalid master_root");
-        Require(Uri.TryCreate(MasterRoot, UriKind.Absolute, out var uri), "Invalid master_root");
+        root ??= MasterRoot;
+        Require(!root.Any(c => "\\%?#".Contains(c)), "Invalid master_root");
+        Require(Uri.TryCreate(root, UriKind.Absolute, out var uri), "Invalid master_root");
         Require(uri!.UserInfo.Length == 0 && uri.Host.Length > 0 && (uri.Scheme == "https" || (AllowLoopbackHttp && uri.Scheme == "http" && uri.Host is "127.0.0.1" or "[::1]")), "HTTPS master_root required");
         return uri;
     }
@@ -198,4 +205,4 @@ public sealed record Config
     }
 }
 
-public sealed record RegionSettings(string Id, string CdnRoot, string? Locale = null, string[]? Locales = null, string? BiliVersion = null, ulong? CriKey = null, string? MetadataRegion = null);
+public sealed record RegionSettings(string Id, string CdnRoot, string? Locale = null, string[]? Locales = null, string? BiliVersion = null, ulong? CriKey = null, string? MetadataRegion = null, string? MasterRoot = null);

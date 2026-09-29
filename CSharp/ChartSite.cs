@@ -69,6 +69,22 @@ public sealed partial class ChartSite(string root, string baseDir, Func<string, 
     bool Stale(string id, string? inputs) => inputs != null && (string?)Parse(File.ReadAllBytes(ManifestPath(id)))["inputs"] != inputs;
     string ManifestPath(string id) => Path.Combine(ChartsDir, id + ".json");
 
+    /// <summary>
+    /// Records the servers that have a chart as its `chart.regions` (copied into charts.json), without composing it again;
+    /// false when the site lacks the chart or already lists these regions.
+    /// </summary>
+    public bool SetRegions(string id, string[] regions)
+    {
+        if (!Has(id)) return false;
+        var manifest = Parse(File.ReadAllBytes(ManifestPath(id))).AsObject();
+        if (manifest["chart"] is not JsonObject chart) manifest["chart"] = chart = new JsonObject();
+        var value = new JsonArray([.. regions.Select(r => (JsonNode?)r)]);
+        if (JsonNode.DeepEquals(chart["regions"], value)) return false;
+        chart["regions"] = value;
+        WriteAtomic(ManifestPath(id), Dump(manifest));
+        return true;
+    }
+
     // ------------------------------------------------------------------ store
     public JsonObject Put(string path, ReadOnlySpan<byte> data)
     {

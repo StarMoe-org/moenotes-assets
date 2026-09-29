@@ -79,6 +79,8 @@ allow_loopback_http = false
 # locale = "ja"
 # locales = ["ja"]
 # metadata_region = "jp"
+# Chart site source (docs/CHART_SITE.md "Several servers"): songs the default region lacks come from here.
+# master_root = "https://metadata.example.invalid/jp/master"
 # The trusted JP API/CDN origins have official defaults. Override only at top level:
 # jp_api_origin = "https://api.bang-dream-on.jp"
 # jp_cdn_origin = "https://static.bang-dream-on.jp"

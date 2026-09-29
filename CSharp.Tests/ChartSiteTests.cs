@@ -67,6 +67,53 @@ public sealed class ChartSiteTests
     }
 
     [Fact]
+    public void MergesChartsOfSeveralServers()
+    {
+        static ChartMaster.Chart Chart(int music, string difficulty) => new(music, difficulty, music * 10, $"{music}_{difficulty}", null, null, 0);
+        // tw first (the default region), then jp and en: shared charts come from tw, a JP-only song from jp.
+        var merged = ChartMaster.Merge([
+            ("tw", [Chart(100001, "expert"), Chart(100001, "easy"), Chart(100107, "hard")]),
+            ("jp", [Chart(100001, "easy"), Chart(100001, "expert"), Chart(100109, "easy"), Chart(100109, "expert")]),
+            ("en", [Chart(100001, "easy"), Chart(100107, "hard")])]);
+        Assert.Equal(new[] { "100001_easy:0:tw,jp,en", "100001_expert:0:tw,jp", "100107_hard:0:tw,en", "100109_easy:1:jp", "100109_expert:1:jp" },
+            merged.Select(m => $"{ChartSite.ChartId(m.Chart.MusicId, m.Chart.Difficulty)}:{m.Source}:{string.Join(',', m.Regions)}"));
+
+        // A JP-only song has no translated title: it falls back to Japanese; translated texts are kept.
+        static JsonArray Rows(params JsonObject[] rows) => new([.. rows]);
+        var master = new Dictionary<string, JsonArray>
+        {
+            ["MasterLiveMusic"] = Rows(new JsonObject { ["_id"] = 100109, ["_vocalCharacterIDs"] = new JsonArray(1), ["_musicSoundID"] = 5, ["_jacketAssetName"] = "jkt_003_100109", ["_titleTextID"] = "t", ["_bandIDs"] = new JsonArray(3) }),
+            ["MasterCharacter"] = Rows(new JsonObject { ["_id"] = 1, ["_bandID"] = 3 }),
+            ["MasterSound"] = Rows(new JsonObject { ["_id"] = 5, ["_soundCueSheetID"] = 7, ["_cueName"] = "cue" }),
+            ["MasterSoundCueSheet"] = Rows(new JsonObject { ["_id"] = 7, ["_cueSheetName"] = "sheet" }),
+            ["MasterBand"] = Rows(new JsonObject { ["_id"] = 3, ["_nameTextID"] = "b" }),
+            ["MasterText"] = Rows(new JsonObject { ["_id"] = "t", ["_japanese"] = "夢我夢中", ["_traditionalChinese"] = "" }, new JsonObject { ["_id"] = "b", ["_japanese"] = "バンド", ["_traditionalChinese"] = "樂團" }),
+        };
+        var song = ChartMaster.Song(master, 100109, "zh-Hant");
+        Assert.Equal(("夢我夢中", "樂團"), (song.Title, song.BandNames.Single()));
+
+        // Only the default region falls back to the top-level master_root; [[regions]] parse and validate their own.
+        using var dir = new TempDirectory(); var path = Path.Combine(dir.Path, "config.toml");
+        File.WriteAllText(path, """
+            region = "tw"
+            master_root = "https://metadata.example/tw/master"
+            [[regions]]
+            id = "tw"
+            cdn_root = "https://cdn.example/tw"
+            [[regions]]
+            id = "jp"
+            cdn_root = "https://cdn.example/jp"
+            master_root = "https://metadata.example/jp/master"
+            [[regions]]
+            id = "en"
+            cdn_root = "https://cdn.example/en"
+            """);
+        var config = Config.Load(path);
+        Assert.Equal(("https://metadata.example/tw/master", "https://metadata.example/jp/master", ""), (config.MasterRootFor("tw"), config.MasterRootFor("jp"), config.MasterRootFor("en")));
+        Assert.Throws<InvalidDataException>(() => (config with { Regions = [.. config.Regions.Select(r => r with { MasterRoot = r.Id == "jp" ? "http://metadata.example/jp/master" : r.MasterRoot })] }).Validate());
+    }
+
+    [Fact]
     public void ReadsTheAacEditList()
     {
         static byte[] Box(string kind, byte[] body) { var b = new byte[8 + body.Length]; System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(b, (uint)b.Length); Encoding.ASCII.GetBytes(kind).CopyTo(b, 4); body.CopyTo(b, 8); return b; }
@@ -130,10 +177,18 @@ public sealed class ChartSiteTests
         Assert.Equal(2, Json(site, files["score/0009_02.notes.json"]!)["judgementNoteCount"]!.GetValue<int>());
 
         File.WriteAllText(Path.Combine(site.Root, "assets", "stray.json"), "{}");
+        // Server tags change the manifest only, not the recorded inputs; unknown charts are not created.
+        site.Build(SampleInput() with { Inputs = "inputs-hash" });
+        Assert.True(site.SetRegions("100009_hard", ["tw", "jp"]));
+        Assert.False(site.SetRegions("100009_hard", ["tw", "jp"]));
+        Assert.False(site.SetRegions("100404_hard", ["jp"]));
+        Assert.False(site.NeedsBuild("100009_hard", false, "inputs-hash"));
         var index = site.WriteIndex();
         Assert.Equal((3, 1), ((int)index["charts"]!, (int)index["removedAssets"]!));
         var charts = JsonNode.Parse(File.ReadAllText(Path.Combine(site.Root, "charts.json")))!["charts"]!.AsArray();
         Assert.Equal(new[] { "100001_expert", "100002_easy", "100009_hard" }, charts.Select(c => (string)c!["id"]!).ToArray());
+        Assert.Equal(new[] { "tw", "jp" }, charts[2]!["regions"]!.AsArray().Select(r => (string)r!));
+        Assert.Null(charts[0]!["regions"]);
         Assert.False(site.IsBase("100009_hard"));
     }
 

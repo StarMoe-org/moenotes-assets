@@ -124,6 +124,7 @@ public sealed partial class AssetService
                         Store.Put("release", latest.Id, latest with { MasterVersion = entry.MasterVersion, ClientVersion = entry.ClientVersion ?? latest.ClientVersion, VerifiedAt = entry.VerifiedAt ?? latest.VerifiedAt });
                         Console.Error.WriteLine($"[versions] {region} master {latest.MasterVersion ?? "none"} -> {entry.MasterVersion} at resource_version {entry.ResourceVersion}");
                         if (region == Config.Region) RequestSites($"{region} master {entry.MasterVersion}");
+                        else if (Config.MasterRootFor(region).Length > 0) RequestChartSite($"{region} master {entry.MasterVersion}");
                         action = "master";
                     }
                     results.Add(new(region, name, action, entry.ResourceVersion, latest.Id, latest.BatchId)); continue;
@@ -226,10 +227,13 @@ public sealed partial class AssetService
             {
                 if (GetRelease(release.Id) is not { State: "queued" } live || live.BatchId != batchId) return;
                 release = release with { State = state, Completed = Now, Locales = [.. locales], Previous = history.FirstOrDefault(r => r.State is "succeeded" or "partial")?.ResourceVersion };
-                // The chart site follows the default region's default language (StartChartSite's snapshot). Requested before
-                // the release is stored, so a caller that sees it finalized also sees the pending build.
-                if (release.Region == Config.Region && release.Locales.Any(l => l.Locale == Config.ForRegion().Locale && l.State is "succeeded" or "partial"))
-                    RequestSites($"{release.Region} resource_version {release.ResourceVersion}");
+                // The chart site follows the default region's default language (StartChartSite's snapshot), and takes songs
+                // the default region lacks from the other regions with a master_root, so their releases rebuild it too.
+                // Requested before the release is stored, so a caller that sees it finalized also sees the pending build.
+                var charts = (release.Region == Config.Region || Config.MasterRootFor(release.Region).Length > 0)
+                    && release.Locales.Any(l => l.Locale == Config.ForRegion(release.Region).Locale && l.State is "succeeded" or "partial");
+                if (charts && release.Region == Config.Region) RequestSites($"{release.Region} resource_version {release.ResourceVersion}");
+                else if (charts) RequestChartSite($"{release.Region} resource_version {release.ResourceVersion}");
                 Store.Put("release", release.Id, release);
                 WriteVersionFiles();
             }

@@ -20,7 +20,7 @@ public sealed partial class AssetService
     private int pendingChartRequests;
     private Task chartRunner = Task.CompletedTask;
     public TaskInfo? LastAutomaticChartSite { get; private set; }
-    private bool ChartSiteConfigured => Config.MasterRoot.Length > 0 && (Config.ChartBaseUrl.Length > 0 || Config.ChartBase.Length > 0);
+    private bool ChartSiteConfigured => Config.MasterRootFor(Config.Region).Length > 0 && (Config.ChartBaseUrl.Length > 0 || Config.ChartBase.Length > 0);
     public string ChartSiteRoot => Path.Combine(Config.DataDir, "chart-site");
     public string ChartBaseRoot => Path.Combine(Config.DataDir, "chart-base");
     static readonly string[] MasterTables = ["MasterLiveMusic", "MasterLiveMusicScore", "MasterSound", "MasterSoundCueSheet", "MasterCharacter", "MasterBand", "MasterText"];
@@ -28,7 +28,7 @@ public sealed partial class AssetService
     public TaskInfo StartChartSite(ChartSiteRequest request)
     {
         Require(Config.ChartBaseUrl.Length > 0 || (Config.ChartBase.Length > 0 && Directory.Exists(Config.ChartBase)), "chart_base_url or chart_base is not configured (or chart_base is missing)");
-        Require(Config.MasterRoot.Length > 0, "master_root is not configured");
+        Require(Config.MasterRootFor(Config.Region).Length > 0, "master_root is not configured");
         var (snapshot, catalog) = GetSnapshot(request.Snapshot, request.Region, request.Locale);
         return Start("chart_site", snapshot.Id, 0, async (task, token) =>
         {
@@ -38,35 +38,38 @@ public sealed partial class AssetService
                 var site = new ChartSite(ChartSiteRoot, await EnsureChartBase(token), HardLink.TryCreate);
                 var imported = site.ImportBase();
                 Console.Error.WriteLine($"[chart-site] base {site.BaseDir} ({(site.IsPackage ? "static package" : "nnnotes site")}), imported {imported.Length} charts");
-                var master = await LoadMaster(token);
+                var sources = await ChartSources(snapshot, catalog, token);
+                var merged = ChartMaster.Merge([.. sources.Select(s => (s.Region, ChartMaster.Charts(s.Master)))]);
                 var baseIdentity = Config.ChartBaseUrl.Length > 0 ? Config.ChartBaseSha256
                     : site.IsPackage ? Crypto.Sha256(File.ReadAllBytes(Path.Combine(site.BaseDir, "base.json"))) : "nnnotes-site";
-                // Plan from the cheap inputs (export manifests and master rows) before composing anything.
-                var results = new List<ItemResult>(); var plan = new List<(List<ChartMaster.Chart> Charts, Dictionary<string, string> Inputs)>();
-                foreach (var song in ChartMaster.Charts(master).Where(c => request.Music == null || request.Music.Contains(c.MusicId)).GroupBy(c => c.MusicId))
+                // Plan from the cheap inputs (export manifests and master rows) before composing anything. Titles use the
+                // default snapshot's locale whichever server a song comes from.
+                var results = new List<ItemResult>(); var plan = new List<(ChartSource Source, List<ChartMaster.Chart> Charts, Dictionary<string, string> Inputs)>();
+                foreach (var song in merged.Where(c => request.Music == null || request.Music.Contains(c.Chart.MusicId)).GroupBy(c => (c.Source, c.Chart.MusicId)))
                 {
                     token.ThrowIfCancellationRequested();
+                    var source = sources[song.Key.Source]; var charts = song.Select(c => c.Chart).ToList();
                     try
                     {
-                        var inputs = await ChartInputs(snapshot, catalog, master, song.ToList(), baseIdentity, token);
-                        var stale = song.Where(c => site.NeedsBuild(ChartSite.ChartId(c.MusicId, c.Difficulty), request.Force, inputs[ChartSite.ChartId(c.MusicId, c.Difficulty)])).ToList();
-                        if (stale.Count > 0) plan.Add((stale, inputs));
+                        var inputs = await ChartInputs(source.Snapshot, source.Catalog, source.Master, charts, baseIdentity, snapshot.Locale, token);
+                        var stale = charts.Where(c => site.NeedsBuild(ChartSite.ChartId(c.MusicId, c.Difficulty), request.Force, inputs[ChartSite.ChartId(c.MusicId, c.Difficulty)])).ToList();
+                        if (stale.Count > 0) plan.Add((source, stale, inputs));
                     }
                     catch (Exception e) when (e is not OperationCanceledException)
                     {
                         // Without its inputs a song's missing charts fail; charts it already has are kept as they are.
-                        results.AddRange(song.Where(c => site.NeedsBuild(ChartSite.ChartId(c.MusicId, c.Difficulty), request.Force))
+                        results.AddRange(charts.Where(c => site.NeedsBuild(ChartSite.ChartId(c.MusicId, c.Difficulty), request.Force))
                             .Select(c => new ItemResult(ChartSite.ChartId(c.MusicId, c.Difficulty), null, e.Message)));
                     }
                 }
                 var total = results.Count + plan.Sum(p => p.Charts.Count);
                 task = task with { Total = total, Completed = results.Count, Results = [.. results], Updated = Now }; Store.Put("task", task.Id, task);
-                foreach (var (charts, inputs) in plan)
+                foreach (var (source, charts, inputs) in plan)
                 {
                     token.ThrowIfCancellationRequested();
                     try
                     {
-                        foreach (var input in await SongInputs(snapshot, catalog, master, charts, token))
+                        foreach (var input in await SongInputs(source.Snapshot, source.Catalog, source.Master, charts, snapshot.Locale, token))
                         {
                             var id = ChartSite.ChartId(input.MusicId, input.Difficulty);
                             try { site.Build(input with { Inputs = inputs[id] }); results.Add(new(id, id, null)); }
@@ -80,8 +83,10 @@ public sealed partial class AssetService
                     Console.Error.WriteLine($"[chart-site] music {charts[0].MusicId}: {results.Count}/{total} charts, {results.Count(r => r.Error != null)} failed");
                     task = task with { Completed = results.Count, Results = [.. results], Updated = Now }; Store.Put("task", task.Id, task);
                 }
+                // Every chart, built now or earlier, records the servers that have it (charts.json `regions`).
+                var tagged = merged.Count(c => site.SetRegions(ChartSite.ChartId(c.Chart.MusicId, c.Chart.Difficulty), c.Regions));
                 var index = site.WriteIndex();
-                Console.Error.WriteLine($"[chart-site] index {index.ToJsonString()}");
+                Console.Error.WriteLine($"[chart-site] index {index.ToJsonString()}, regions updated on {tagged} charts");
                 var failed = results.Count(r => r.Error != null);
                 return task with { Completed = results.Count, Results = [.. results], State = failed == 0 ? "succeeded" : failed < results.Count ? "partial" : "failed" };
             }
@@ -140,9 +145,9 @@ public sealed partial class AssetService
         return Convert.ToHexStringLower(hash.GetHashAndReset());
     }
 
-    private async Task<Dictionary<string, JsonArray>> LoadMaster(CancellationToken token, string[]? names = null)
+    private async Task<Dictionary<string, JsonArray>> LoadMaster(Uri root, CancellationToken token, string[]? names = null)
     {
-        var root = Config.MasterUri(); var tables = new Dictionary<string, JsonArray>(StringComparer.Ordinal);
+        var tables = new Dictionary<string, JsonArray>(StringComparer.Ordinal);
         foreach (var name in names ?? MasterTables)
         {
             var bytes = await Fetch(new Uri(root.AbsoluteUri.TrimEnd('/') + "/" + name + ".json"), 256 << 20, token);
@@ -152,16 +157,38 @@ public sealed partial class AssetService
         return tables;
     }
 
+    /// <summary>One server the chart site takes songs from: its snapshot and catalog, and its master data.</summary>
+    private sealed record ChartSource(string Region, Snapshot Snapshot, Catalog Catalog, Dictionary<string, JsonArray> Master);
+
+    /// <summary>
+    /// The chart site's servers, in the order charts are taken from them: the build's snapshot (the default region's), then
+    /// every other region with a master_root at its default locale. A region without a snapshot yet is skipped.
+    /// </summary>
+    private async Task<List<ChartSource>> ChartSources(Snapshot snapshot, Catalog catalog, CancellationToken token)
+    {
+        var primary = Config.MasterRootFor(snapshot.Region) is { Length: > 0 } root ? root : Config.MasterRoot;
+        var sources = new List<ChartSource> { new(snapshot.Region, snapshot, catalog, await LoadMaster(Config.MasterUri(primary), token)) };
+        foreach (var region in Config.Regions.Select(r => r.Id).Where(id => id != snapshot.Region && Config.MasterRootFor(id).Length > 0))
+        {
+            Snapshot other; Catalog otherCatalog;
+            try { (other, otherCatalog) = GetSnapshot(null, region); }
+            catch (ApiException e) when (e.Status == 404) { Console.Error.WriteLine($"[chart-site] {region}: no catalog snapshot yet, skipped"); continue; }
+            sources.Add(new(region, other, otherCatalog, await LoadMaster(Config.MasterUri(Config.MasterRootFor(region)), token)));
+        }
+        Console.Error.WriteLine("[chart-site] sources " + string.Join(' ', sources.Select(s => $"{s.Region}/{s.Snapshot.Locale}")));
+        return sources;
+    }
+
     /// <summary>
     /// What each chart of one song is built from, hashed: the build version, static base and locale, the master rows, and
     /// the published score, BGM (with the cue sheet's plaintext sources, which hold its ACB) and jacket.
     /// </summary>
-    private async Task<Dictionary<string, string>> ChartInputs(Snapshot snapshot, Catalog catalog, Dictionary<string, JsonArray> master, List<ChartMaster.Chart> charts, string baseIdentity, CancellationToken token)
+    private async Task<Dictionary<string, string>> ChartInputs(Snapshot snapshot, Catalog catalog, Dictionary<string, JsonArray> master, List<ChartMaster.Chart> charts, string baseIdentity, string locale, CancellationToken token)
     {
         static string Files(Manifest export) => string.Join(',', export.Files.Select(f => f.Sha256));
-        var song = ChartMaster.Song(master, charts[0].MusicId, snapshot.Locale);
+        var song = ChartMaster.Song(master, charts[0].MusicId, locale);
         var bgm = await ExportKey(snapshot, catalog, $"Cri/Sound/{song.Sheet}", token);
-        string[] common = [ChartSite.BuildVersion.ToString(CultureInfo.InvariantCulture), baseIdentity, snapshot.Locale, Json.Write(song),
+        string[] common = [ChartSite.BuildVersion.ToString(CultureInfo.InvariantCulture), baseIdentity, locale, Json.Write(song),
             Files(bgm), string.Join(',', bgm.Sources.Select(s => s.PlainSha256 ?? s.DownloadSha256)),
             Files(await ExportKey(snapshot, catalog, $"Image/Jacket/{song.Jacket}", token))];
         var inputs = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -205,9 +232,9 @@ public sealed partial class AssetService
     }
 
     /// <summary>What each chart of one song needs, from the song's exports in the snapshot.</summary>
-    private async Task<List<ChartSite.ChartInput>> SongInputs(Snapshot snapshot, Catalog catalog, Dictionary<string, JsonArray> master, List<ChartMaster.Chart> charts, CancellationToken token)
+    private async Task<List<ChartSite.ChartInput>> SongInputs(Snapshot snapshot, Catalog catalog, Dictionary<string, JsonArray> master, List<ChartMaster.Chart> charts, string locale, CancellationToken token)
     {
-        var song = ChartMaster.Song(master, charts[0].MusicId, snapshot.Locale);
+        var song = ChartMaster.Song(master, charts[0].MusicId, locale);
         var bgm = await ExportKey(snapshot, catalog, $"Cri/Sound/{song.Sheet}", token);
         var acb = AcbCues.Parse(await ReadCueSheet(snapshot, catalog, $"Cri/Sound/{song.Sheet}", token));
         var cue = acb.TryGetValue(song.Cue, out var c) ? c : throw new InvalidDataException($"{song.Sheet}: cue {song.Cue} missing");
@@ -371,7 +398,27 @@ public static class ChartMaster
         return output;
     }
 
-    /// <summary>A song's rows. The stage band is that of the first vocal character (nnnotes live.resolve_band default).</summary>
+    /// <summary>
+    /// The site's charts from several servers' master data, in music id and difficulty order: each chart is taken from the
+    /// first source that has it (index into <paramref name="sources"/>) and lists every source region that has it.
+    /// </summary>
+    public static List<(int Source, Chart Chart, string[] Regions)> Merge(IReadOnlyList<(string Region, List<Chart> Charts)> sources)
+    {
+        var owners = new Dictionary<string, (int Source, Chart Chart, List<string> Regions)>(StringComparer.Ordinal);
+        for (var i = 0; i < sources.Count; i++)
+            foreach (var chart in sources[i].Charts)
+            {
+                if (owners.TryGetValue(ChartSite.ChartId(chart.MusicId, chart.Difficulty), out var owner)) owner.Regions.Add(sources[i].Region);
+                else owners[ChartSite.ChartId(chart.MusicId, chart.Difficulty)] = (i, chart, [sources[i].Region]);
+            }
+        return [.. owners.Values.OrderBy(o => o.Chart.MusicId).ThenBy(o => Array.IndexOf(ChartScore.Difficulties, o.Chart.Difficulty))
+            .Select(o => (o.Source, o.Chart, o.Regions.ToArray()))];
+    }
+
+    /// <summary>
+    /// A song's rows. The stage band is that of the first vocal character (nnnotes live.resolve_band default). Texts
+    /// missing in the locale (a song only one server has, untranslated) fall back to Japanese.
+    /// </summary>
     public static SongRows Song(Dictionary<string, JsonArray> master, int musicId, string locale)
     {
         var music = ById(master, "MasterLiveMusic").GetValueOrDefault(musicId) ?? throw new InvalidDataException($"MasterLiveMusic {musicId} missing");
@@ -383,7 +430,8 @@ public static class ChartMaster
         var sheet = ById(master, "MasterSoundCueSheet").GetValueOrDefault(ChartSite.Integer(sound["_soundCueSheetID"])) ?? throw new InvalidDataException($"MasterSoundCueSheet {sound["_soundCueSheetID"]} missing");
         var column = locale switch { "zh-Hans" => "_simplifiedChinese", "ja" => "_japanese", "en" => "_english", "ko" => "_korean", _ => "_traditionalChinese" };
         var texts = master["MasterText"].Select(r => r!.AsObject()).GroupBy(r => (string)r["_id"]!).ToDictionary(g => g.Key, g => g.First());
-        string? Text(JsonNode? id) => id is null || !texts.TryGetValue((string)id!, out var row) ? null : (string?)row[column];
+        string? Text(JsonNode? id) => id is null || !texts.TryGetValue((string)id!, out var row) ? null
+            : (string?)row[column] is { Length: > 0 } text ? text : (string?)row["_japanese"];
         var bands = ById(master, "MasterBand");
         var names = (music["_bandIDs"]?.AsArray() ?? []).Select(b => bands.TryGetValue(ChartSite.Integer(b), out var band) ? Text(band["_nameTextID"]) : null).ToArray();
         return new(music, (int)ChartSite.Integer(character["_bandID"]), (string)sheet["_cueSheetName"]!, (string)sound["_cueName"]!, sound,

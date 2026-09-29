@@ -35,7 +35,7 @@ public sealed partial class AssetService
                 Dictionary<string, JsonObject>? names = null;
                 if (Config.MasterRoot.Length > 0)
                 {
-                    try { names = ModelSite.Names(await LoadMaster(token, ModelSite.MasterTables), snapshot.Locale); }
+                    try { names = ModelSite.Names(await LoadMaster(Config.MasterUri(), token, ModelSite.MasterTables), snapshot.Locale); }
                     catch (Exception e) when (e is not OperationCanceledException) { Console.Error.WriteLine($"[model-site] model names left out: {e.Message}"); }
                 }
                 var all = ModelSite.Models(catalog.Keys.Keys.Where(k => k.StartsWith(ModelSite.Live2DPrefix, StringComparison.Ordinal)));
