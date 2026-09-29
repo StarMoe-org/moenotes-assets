@@ -130,15 +130,23 @@ public static partial class ModelSite
         }
         var model = new JsonObject
         {
-            ["group"] = Group(key), ["canvas"] = summary["canvas"]!.DeepClone(), ["textures"] = summary["textures"]!.AsArray().Count, ["nodes"] = summary["nodes"]!.DeepClone(),
+            ["group"] = Group(key),
+            ["canvas"] = summary["canvas"]!.DeepClone(),
+            ["textures"] = summary["textures"]!.AsArray().Count,
+            ["nodes"] = summary["nodes"]!.DeepClone(),
         };
         SetNames(model, names);
         var manifestFiles = new JsonObject();
         foreach (var (path, entry) in entries) manifestFiles[path] = entry;
         var manifest = new JsonObject
         {
-            ["format"] = Format, ["id"] = id, ["key"] = key, ["model"] = model, ["files"] = manifestFiles,
-            ["builder"] = ChartSite.Builder, ["inputs"] = inputs,
+            ["format"] = Format,
+            ["id"] = id,
+            ["key"] = key,
+            ["model"] = model,
+            ["files"] = manifestFiles,
+            ["builder"] = ChartSite.Builder,
+            ["inputs"] = inputs,
         };
         WriteAtomic(ManifestPath(root, id), Dump(manifest));
         return new JsonObject { ["id"] = id, ["files"] = entries.Count, ["bytes"] = entries.Values.Sum(e => ChartSite.Integer(e["size"])) };
@@ -178,8 +186,11 @@ public static partial class ModelSite
                 else used.Add((string)entry["asset"]!);
             var item = new JsonObject
             {
-                ["id"] = Path.GetFileNameWithoutExtension(path), ["manifest"] = $"{ModelsDir}/{Path.GetFileName(path)}", ["key"] = manifest["key"]?.DeepClone(),
-                ["files"] = files.Count, ["bytes"] = files.Sum(f => ChartSite.Integer(f.Value!["size"])),
+                ["id"] = Path.GetFileNameWithoutExtension(path),
+                ["manifest"] = $"{ModelsDir}/{Path.GetFileName(path)}",
+                ["key"] = manifest["key"]?.DeepClone(),
+                ["files"] = files.Count,
+                ["bytes"] = files.Sum(f => ChartSite.Integer(f.Value!["size"])),
             };
             foreach (var (k, v) in manifest["model"]?.AsObject() ?? []) item[k] = v?.DeepClone();
             models.Add(item);

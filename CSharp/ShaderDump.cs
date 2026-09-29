@@ -23,8 +23,13 @@ public static partial class ShaderDump
     {
         public PyObject Record() => new()
         {
-            ["file"] = File, ["platform"] = Platform, ["subShader"] = SubShader, ["pass"] = Pass, ["stage"] = Stage,
-            ["type"] = ProgramType, ["keywords"] = Keywords.Cast<object?>().ToList(),
+            ["file"] = File,
+            ["platform"] = Platform,
+            ["subShader"] = SubShader,
+            ["pass"] = Pass,
+            ["stage"] = Stage,
+            ["type"] = ProgramType,
+            ["keywords"] = Keywords.Cast<object?>().ToList(),
         };
     }
     /// <summary>One dumped shader: its name, the file name stem, the parsed summary and the GLES3 variants.</summary>

@@ -59,8 +59,12 @@ public sealed class ApkData
         }
         return new()
         {
-            Sha256 = UnityTree.Str(apk["sha256"]), UnityVersion = UnityTree.Str(apk["unityVersion"]), ScriptFile = UnityTree.Str(scripts["file"]),
-            Scripts = table, Resources = UnityTree.Obj(doc["resources"]), Shaders = shaders,
+            Sha256 = UnityTree.Str(apk["sha256"]),
+            UnityVersion = UnityTree.Str(apk["unityVersion"]),
+            ScriptFile = UnityTree.Str(scripts["file"]),
+            Scripts = table,
+            Resources = UnityTree.Obj(doc["resources"]),
+            Shaders = shaders,
         };
     }
 

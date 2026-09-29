@@ -10,8 +10,15 @@ public sealed class ModelSiteTests
     {
         var doc = new PyObject
         {
-            ["b"] = 1L, ["a"] = 1.0, ["f"] = (double)0.3f, ["inf"] = double.PositiveInfinity, ["ninf"] = double.NegativeInfinity, ["neg0"] = -0.0,
-            ["s"] = "é\"\\\n\u0001", ["l"] = new List<object?> { true, null, 1e-5, 123456789012345.0 }, ["o"] = new PyObject(),
+            ["b"] = 1L,
+            ["a"] = 1.0,
+            ["f"] = (double)0.3f,
+            ["inf"] = double.PositiveInfinity,
+            ["ninf"] = double.NegativeInfinity,
+            ["neg0"] = -0.0,
+            ["s"] = "é\"\\\n\u0001",
+            ["l"] = new List<object?> { true, null, 1e-5, 123456789012345.0 },
+            ["o"] = new PyObject(),
         };
         Assert.Equal("{\"b\":1,\"a\":1.0,\"f\":0.30000001192092896,\"inf\":1e999,\"ninf\":-1e999,\"neg0\":-0.0,\"s\":\"é\\\"\\\\\\n\\u0001\",\"l\":[true,null,1e-05,123456789012345.0],\"o\":{}}",
             PyJson.Dumps(doc));
@@ -112,7 +119,9 @@ public sealed class ModelSiteTests
         File.WriteAllBytes(Path.Combine(work, "textures", "t.png"), [1, 2, 3]);
         File.WriteAllBytes(Path.Combine(work, Live2DModel.SummaryFile), PyJson.Minified(new PyObject
         {
-            ["canvas"] = new PyObject { ["width"] = 6000.0 }, ["textures"] = new List<object?> { "textures/t.png" }, ["nodes"] = 3L,
+            ["canvas"] = new PyObject { ["width"] = 6000.0 },
+            ["textures"] = new List<object?> { "textures/t.png" },
+            ["nodes"] = 3L,
         }));
         var key = "Character/Live2D/003_adv/m/model/m";
         var names = new JsonObject { ["character"] = 3, ["names"] = new JsonObject { ["ja"] = "x" }, ["label"] = "x" };

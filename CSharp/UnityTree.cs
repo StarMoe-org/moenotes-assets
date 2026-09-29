@@ -65,14 +65,24 @@ public static class UnityTree
     public static List<object?> List(object? value) => value as List<object?> ?? throw new InvalidDataException($"Expected a list, got {value?.GetType().Name ?? "null"}");
     public static long Long(object? value) => value switch
     {
-        long l => l, ulong u => checked((long)u), int i => i, bool b => b ? 1 : 0,
+        long l => l,
+        ulong u => checked((long)u),
+        int i => i,
+        bool b => b ? 1 : 0,
         _ => throw new InvalidDataException($"Expected an integer, got {value?.GetType().Name ?? "null"}"),
     };
     public static string Str(object? value) => value as string ?? throw new InvalidDataException($"Expected a string, got {value?.GetType().Name ?? "null"}");
     public static bool Truthy(object? value) => value switch
     {
-        null => false, bool b => b, long l => l != 0, ulong u => u != 0, double d => d != 0, string s => s.Length > 0,
-        PyObject o => o.Count > 0, System.Collections.ICollection c => c.Count > 0, _ => true,
+        null => false,
+        bool b => b,
+        long l => l != 0,
+        ulong u => u != 0,
+        double d => d != 0,
+        string s => s.Length > 0,
+        PyObject o => o.Count > 0,
+        System.Collections.ICollection c => c.Count > 0,
+        _ => true,
     };
     public static bool IsPPtr(object? value) => value is PyObject o && o.Count == 2 && o.ContainsKey("m_FileID") && o.ContainsKey("m_PathID");
 }

@@ -195,14 +195,28 @@ sealed class Live2DExporter
     static readonly string[] Header = ["m_GameObject", "m_Script"];
     static readonly Dictionary<long, string> ClassId = new()
     {
-        [1] = "GameObject", [4] = "Transform", [23] = "MeshRenderer", [95] = "Animator", [198] = "ParticleSystem",
-        [199] = "ParticleSystemRenderer", [212] = "SpriteRenderer", [224] = "RectTransform", [225] = "CanvasGroup",
-        [114] = "MonoBehaviour", [137] = "SkinnedMeshRenderer", [120] = "LineRenderer", [96] = "TrailRenderer",
-        [331] = "SpriteMask", [222] = "CanvasRenderer",
+        [1] = "GameObject",
+        [4] = "Transform",
+        [23] = "MeshRenderer",
+        [95] = "Animator",
+        [198] = "ParticleSystem",
+        [199] = "ParticleSystemRenderer",
+        [212] = "SpriteRenderer",
+        [224] = "RectTransform",
+        [225] = "CanvasGroup",
+        [114] = "MonoBehaviour",
+        [137] = "SkinnedMeshRenderer",
+        [120] = "LineRenderer",
+        [96] = "TrailRenderer",
+        [331] = "SpriteMask",
+        [222] = "CanvasRenderer",
     };
     static readonly Dictionary<long, (string, int)> TransformAttr = new()
     {
-        [1] = ("m_LocalPosition", 3), [2] = ("m_LocalRotation", 4), [3] = ("m_LocalScale", 3), [4] = ("localEulerAnglesRaw", 3),
+        [1] = ("m_LocalPosition", 3),
+        [2] = ("m_LocalRotation", 4),
+        [3] = ("m_LocalScale", 3),
+        [4] = ("localEulerAnglesRaw", 3),
     };
     static readonly string[] EngineProps = ["m_IsActive", "m_Enabled", "m_Color.r", "m_Color.g", "m_Color.b", "m_Color.a",
         "m_Size.x", "m_Size.y", "m_FlipX", "m_FlipY", "m_SortingOrder", "m_Sprite", "m_Alpha",
@@ -390,8 +404,13 @@ sealed class Live2DExporter
         textureFiles[file] = o;
         return textures[o.Key] = new PyObject
         {
-            ["texture"] = file, ["name"] = tt["m_Name"], ["width"] = tt["m_Width"], ["height"] = tt["m_Height"],
-            ["format"] = tt["m_TextureFormat"], ["mipCount"] = tt.Get("m_MipCount", 1L), ["colorSpace"] = tt.Get("m_ColorSpace"),
+            ["texture"] = file,
+            ["name"] = tt["m_Name"],
+            ["width"] = tt["m_Width"],
+            ["height"] = tt["m_Height"],
+            ["format"] = tt["m_TextureFormat"],
+            ["mipCount"] = tt.Get("m_MipCount", 1L),
+            ["colorSpace"] = tt.Get("m_ColorSpace"),
             ["settings"] = tt.Get("m_TextureSettings"),
         };
     }
@@ -457,9 +476,15 @@ sealed class Live2DExporter
             }
             var node = new PyObject
             {
-                ["path"] = graph.Path(tf), ["name"] = go["m_Name"], ["active"] = Truthy(go["m_IsActive"]), ["layer"] = go["m_Layer"],
-                ["tag"] = go.Get("m_Tag"), ["localPosition"] = t["m_LocalPosition"], ["localRotation"] = t["m_LocalRotation"],
-                ["localScale"] = t["m_LocalScale"], ["components"] = components,
+                ["path"] = graph.Path(tf),
+                ["name"] = go["m_Name"],
+                ["active"] = Truthy(go["m_IsActive"]),
+                ["layer"] = go["m_Layer"],
+                ["tag"] = go.Get("m_Tag"),
+                ["localPosition"] = t["m_LocalPosition"],
+                ["localRotation"] = t["m_LocalRotation"],
+                ["localScale"] = t["m_LocalScale"],
+                ["components"] = components,
             };
             if (t.ContainsKey("m_AnchorMin"))
             {
@@ -564,10 +589,20 @@ sealed class Live2DExporter
         var tid = Long(b["typeID"]);
         var r = new Dictionary<string, object?>
         {
-            ["pathCrc"] = (uint)Long(b["path"]), ["typeID"] = tid, ["attributeCrc"] = (uint)Long(b["attribute"]),
-            ["pptr"] = Truthy(b["isPPtrCurve"]), ["int"] = Truthy(b["isIntCurve"]), ["customType"] = b.Get("customType") is { } ct ? Long(ct) : null,
-            ["serializeReference"] = Truthy(b.Get("isSerializeReferenceCurve")), ["path"] = null, ["pathCandidates"] = null,
-            ["attribute"] = null, ["curveCount"] = 1, ["transformAttr"] = false, ["component"] = null, ["script"] = null,
+            ["pathCrc"] = (uint)Long(b["path"]),
+            ["typeID"] = tid,
+            ["attributeCrc"] = (uint)Long(b["attribute"]),
+            ["pptr"] = Truthy(b["isPPtrCurve"]),
+            ["int"] = Truthy(b["isIntCurve"]),
+            ["customType"] = b.Get("customType") is { } ct ? Long(ct) : null,
+            ["serializeReference"] = Truthy(b.Get("isSerializeReferenceCurve")),
+            ["path"] = null,
+            ["pathCandidates"] = null,
+            ["attribute"] = null,
+            ["curveCount"] = 1,
+            ["transformAttr"] = false,
+            ["component"] = null,
+            ["script"] = null,
         };
         if (tid == 4 && TransformAttr.TryGetValue(Long(b["attribute"]), out var ta) && !(bool)r["pptr"]!)
         {
@@ -606,13 +641,23 @@ sealed class Live2DExporter
         if (Truthy(streamed.Get("discreteCurveCount"))) s["discreteCurveCount"] = streamed["discreteCurveCount"];
         var clip = new PyObject
         {
-            ["clip"] = name, ["sampleRate"] = tt["m_SampleRate"], ["wrapMode"] = tt["m_WrapMode"], ["startTime"] = mc["m_StartTime"],
-            ["stopTime"] = mc["m_StopTime"], ["loopTime"] = Truthy(mc["m_LoopTime"]), ["cycleOffset"] = mc["m_CycleOffset"], ["events"] = events,
-            ["bindings"] = bindings.Select(BindingGeneric).ToList(), ["streamed"] = s,
+            ["clip"] = name,
+            ["sampleRate"] = tt["m_SampleRate"],
+            ["wrapMode"] = tt["m_WrapMode"],
+            ["startTime"] = mc["m_StartTime"],
+            ["stopTime"] = mc["m_StopTime"],
+            ["loopTime"] = Truthy(mc["m_LoopTime"]),
+            ["cycleOffset"] = mc["m_CycleOffset"],
+            ["events"] = events,
+            ["bindings"] = bindings.Select(BindingGeneric).ToList(),
+            ["streamed"] = s,
             ["dense"] = new PyObject
             {
-                ["curveCount"] = dense["m_CurveCount"], ["frameCount"] = dense["m_FrameCount"], ["sampleRate"] = dense["m_SampleRate"],
-                ["beginTime"] = dense["m_BeginTime"], ["samples"] = new List<object?>(List(dense["m_SampleArray"])),
+                ["curveCount"] = dense["m_CurveCount"],
+                ["frameCount"] = dense["m_FrameCount"],
+                ["sampleRate"] = dense["m_SampleRate"],
+                ["beginTime"] = dense["m_BeginTime"],
+                ["samples"] = new List<object?>(List(dense["m_SampleArray"])),
             },
             ["constant"] = new List<object?>(constant),
         };
@@ -626,7 +671,8 @@ sealed class Live2DExporter
         var tid = (long)r["typeID"]!; var script = ((string, string)?)r["script"];
         var d = new PyObject
         {
-            ["path"] = r["path"], ["typeID"] = tid,
+            ["path"] = r["path"],
+            ["typeID"] = tid,
             ["class"] = tid == 114 && script != null ? script.Value.Item2 : ClassId.TryGetValue(tid, out var c) ? c : $"classID {tid}",
             ["attribute"] = r["attribute"],
         };
@@ -700,8 +746,15 @@ sealed class Live2DExporter
         }
         var doc = new PyObject
         {
-            ["format"] = (long)Live2DModel.Format, ["name"] = name, ["key"] = key, ["moc3"] = $"{name}.moc3", ["prefab"] = $"{name}.prefab.json",
-            ["textures"] = drawableTextures.Cast<object?>().ToList(), ["canvas"] = canvas, ["shaders"] = "shaders/shaders.json", ["resources"] = resources,
+            ["format"] = (long)Live2DModel.Format,
+            ["name"] = name,
+            ["key"] = key,
+            ["moc3"] = $"{name}.moc3",
+            ["prefab"] = $"{name}.prefab.json",
+            ["textures"] = drawableTextures.Cast<object?>().ToList(),
+            ["canvas"] = canvas,
+            ["shaders"] = "shaders/shaders.json",
+            ["resources"] = resources,
         };
         if (materials.Any(m => List(m["keywords"]).Contains(Live2DModel.MaskKeyword))) materials.AddRange(resources.Select(p => UnityTree.Obj(p.Value)));
         var shaderFiles = ShaderDump.Files(dumps, materials);
@@ -738,7 +791,11 @@ sealed class Live2DExporter
         Put("shaders/shaders.json", PyJson.Minified(index), "application/json");
         var summary = new PyObject
         {
-            ["name"] = name, ["key"] = key, ["canvas"] = canvas, ["textures"] = drawableTextures.Cast<object?>().ToList(), ["nodes"] = (long)nodes.Count,
+            ["name"] = name,
+            ["key"] = key,
+            ["canvas"] = canvas,
+            ["textures"] = drawableTextures.Cast<object?>().ToList(),
+            ["nodes"] = (long)nodes.Count,
             ["shaders"] = names.Cast<object?>().ToList(),
         };
         File.WriteAllBytes(Path.Combine(outDir, Live2DModel.SummaryFile), PyJson.Minified(summary));
