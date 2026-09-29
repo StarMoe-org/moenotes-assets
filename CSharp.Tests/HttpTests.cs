@@ -83,6 +83,57 @@ public class HttpTests
         await cdn.StopAsync();
     }
     [Fact]
+    public async Task RegionPathsServeEachRegionBesideDefaultLocalePaths()
+    {
+        using var dir = new TempDirectory();
+        var fixtures = new Dictionary<string, (byte[] Catalog, byte[] Bundle)> { ["tw"] = Fixture.Create(), ["en"] = Fixture.Create("{\"fixture\":2026}"u8.ToArray()) };
+        var builder = WebApplication.CreateBuilder(); builder.Logging.ClearProviders(); builder.WebHost.UseUrls("http://127.0.0.1:0"); await using var cdn = builder.Build();
+        cdn.MapGet("/{root}/asset/Android/{file}", (string root, string file) => file.EndsWith(".hash") ? Results.Text("hash")
+            : Results.Bytes(file.EndsWith(".bin") ? fixtures[root].Catalog : fixtures[root].Bundle));
+        await cdn.StartAsync(); var address = Address(cdn);
+        // The en server's ID equals a locale: /en/{key} is the default region's en, /en/en/{key} the en server's.
+        var config = new Config
+        {
+            DataDir = dir.Path,
+            AllowLoopbackHttp = true,
+            Region = "tw",
+            Regions = [new("tw", address + "/tw", "en", ["zh-Hant", "en"]), new("en", address + "/en", "en", ["en"])]
+        };
+        await using var service = new AssetService(config);
+        await using var app = Api.Build(service, "http://127.0.0.1:0", apiKey: "integration-test-key"); await app.StartAsync();
+        using var http = new HttpClient { BaseAddress = new Uri(Address(app)) };
+        foreach (var region in new[] { "tw", "en" })
+        {
+            Assert.Equal("succeeded", (await service.Wait(service.StartRefresh(region, "en").Id)).State);
+            Assert.Equal("succeeded", (await service.Wait(service.StartExport(new(Keys: [Fixture.Key], Region: region, Locale: "en")).Id)).State);
+        }
+        var (tw, en) = (Fixture.Body, "{\"fixture\":2026}"u8.ToArray());
+        foreach (var (url, body) in new[] { ($"/en/{Fixture.Key}/fixture.json", tw), ($"/tw/en/{Fixture.Key}/fixture.json", tw), ($"/en/en/{Fixture.Key}/fixture.json", en) })
+        {
+            var response = await http.GetAsync(url); Assert.Equal(body, await response.Content.ReadAsByteArrayAsync());
+            Assert.Equal(TimeSpan.FromSeconds(600), response.Headers.CacheControl!.MaxAge);
+        }
+        Assert.Equal(en, File.ReadAllBytes(Path.Combine(service.RegionsRoot, "en", "en", "Live", "MusicScore", "test", "fixture.json")));
+        Assert.False(Directory.Exists(Path.Combine(service.PublicRoot, "zh-Hant")));
+        var regional = await http.GetStringAsync($"/en/en/{Fixture.Key}/");
+        var listing = Json.Read<AssetService.PathListing>(regional);
+        Assert.Equal(("en", $"/en/en/{Fixture.Key}/fixture.json"), (listing.Region, Assert.Single(listing.Files).Path));
+        Assert.Equal(service.Store.CurrentSnapshot("en", "en", "main"), listing.Snapshot);
+        // /{locale}/ listings keep their original fields.
+        var plain = await http.GetStringAsync($"/en/{Fixture.Key}/");
+        Assert.DoesNotContain("\"region\"", plain);
+        Assert.Equal($"/en/{Fixture.Key}/fixture.json", Assert.Single(Json.Read<AssetService.PathListing>(plain).Files).Path);
+        foreach (var missing in new[] { $"/en/zh-Hant/{Fixture.Key}/fixture.json", $"/kr/en/{Fixture.Key}/fixture.json", $"/tw/ja/{Fixture.Key}/fixture.json", "/tw/en/", "/en/en/", $"/zh-Hant/{Fixture.Key}/fixture.json" })
+            Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync(missing)).StatusCode);
+        // Before the backfill, a lost region tree is answered from SQLite; the backfill then relinks it.
+        Directory.Delete(service.RegionsRoot, true); Directory.CreateDirectory(service.RegionsRoot);
+        Assert.Equal(en, await http.GetByteArrayAsync($"/en/en/{Fixture.Key}/fixture.json"));
+        await service.BackfillPublicTree();
+        Assert.Equal(en, File.ReadAllBytes(Path.Combine(service.RegionsRoot, "en", "en", "Live", "MusicScore", "test", "fixture.json")));
+        Assert.Equal(tw, File.ReadAllBytes(Path.Combine(service.RegionsRoot, "tw", "en", "Live", "MusicScore", "test", "fixture.json")));
+        await app.StopAsync(); await cdn.StopAsync();
+    }
+    [Fact]
     public async Task QueueLimitAndCancellation()
     {
         using var dir = new TempDirectory(); var builder = WebApplication.CreateBuilder(); builder.Logging.ClearProviders(); builder.WebHost.UseUrls("http://127.0.0.1:0"); await using var cdn = builder.Build();

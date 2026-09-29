@@ -20,6 +20,9 @@ changes require explicit release notes; a frozen stable API is not claimed.
 
 ## 0.2.0-csharp (unreleased)
 
+- Serve every configured region's exports at `/{region}/{locale}/{key}/…` (static tree `data/regions/`), beside the
+  unchanged default-region `/{locale}/{key}/…`. The first start rebuilds the path trees in the background.
+
 - Retrieve JP Android assets from metadata-provided version/hash paths, with
   anonymous Version authentication, gzip catalogs and RemoteAssetDir expansion.
   Keep CDN credentials in memory and preserve hash-only release updates.

@@ -3,33 +3,42 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 namespace MoenotesAssets;
 
-// Published files are also materialized as a static tree, public/{locale}/{key}/{label}{extension}, of hard links to
-// their content-addressed blobs. The static file middleware serves it without touching SQLite; identical files in
-// several languages share one blob.
+// Published files are also materialized as static trees of hard links to their content-addressed blobs:
+// public/{locale}/{key}/{label}{extension} for the default region, and regions/{region}/{locale}/{key}/{label}{extension}
+// for every configured region (the default one included). The static file middleware serves them without touching
+// SQLite; identical files in several languages or regions share one blob.
 public sealed partial class AssetService
 {
     private const string TreeVersionSetting = "public_tree_version";
     // Bump to rebuild existing trees on the next start (2: names shared by different content get __{seq} aliases;
-    // 3: movies, whose labels are their asset key, are named after the key's last segment).
-    private const int TreeVersion = 3;
+    // 3: movies, whose labels are their asset key, are named after the key's last segment; 4: the regions/ tree).
+    private const int TreeVersion = 4;
     /// <summary>Which snapshot's export owns a key's directory, and the names it linked (stored as .export.json there).</summary>
     public sealed record PathState(string Snapshot, long Created, string[] Names);
     private readonly object treeGate = new();
     private readonly ConcurrentDictionary<string, Snapshot> snapshotsById = new(StringComparer.Ordinal);
     private int copyFallbackLogged;
     public string PublicRoot => Path.Combine(Config.DataDir, "public");
+    public string RegionsRoot => Path.Combine(Config.DataDir, "regions");
     /// <summary>False until existing exports are backfilled; until then the path fallback resolves misses from SQLite.</summary>
     public bool PublicTreeReady { get; private set; }
 
-    public bool IsPathLocale(string locale)
+    public bool IsPathLocale(string locale) => PathScope(null, locale) != null;
+
+    /// <summary>
+    /// The region whose exports serve a path: <paramref name="region"/> for /{region}/{locale}/, null for the default
+    /// region's /{locale}/. Null when the region is not configured or does not list the locale.
+    /// </summary>
+    public Config? PathScope(string? region, string locale)
     {
-        var region = Config.ForRegion();
-        return (region.Locales.Length == 0 ? [region.Locale] : region.Locales).Contains(locale, StringComparer.Ordinal);
+        if (region != null && (Config.Regions.Length == 0 ? region != Config.Region : !Config.Regions.Any(r => r.Id == region))) return null;
+        var scope = Config.ForRegion(region);
+        return (scope.Locales.Length == 0 ? [scope.Locale] : scope.Locales).Contains(locale, StringComparer.Ordinal) ? scope : null;
     }
 
     /// <summary>
-    /// Links a manifest's addressable files into the tree unless a newer snapshot already owns the key. Each link is
-    /// created under a dot-prefixed temporary name (never served) and renamed into place atomically.
+    /// Links a manifest's addressable files into each tree that serves its snapshot, unless a newer snapshot already
+    /// owns the key there. Each link is created under a dot-prefixed temporary name (never served) and renamed into place.
     /// </summary>
     public bool MaterializePaths(Manifest manifest)
     {
@@ -37,26 +46,29 @@ public sealed partial class AssetService
         {
             if (!snapshotsById.TryGetValue(manifest.Snapshot, out var snapshot) && (snapshot = Store.Get<Snapshot>("snapshot", manifest.Snapshot)) != null)
                 snapshotsById[manifest.Snapshot] = snapshot;
-            var region = Config.ForRegion();
-            if (snapshot == null || snapshot.Region != region.Region || snapshot.BiliVersion != region.BiliVersion || !IsPathLocale(snapshot.Locale)) return true;
             var segments = manifest.Key.Split('/');
-            if (!segments.All(SafeSegment)) return true;
-            var directory = Path.Combine([PublicRoot, snapshot.Locale, .. segments]);
+            if (snapshot == null || !segments.All(SafeSegment)) return true;
             var files = PathFiles(manifest);
-            lock (treeGate)
+            foreach (var region in new[] { null, snapshot.Region })
             {
-                // The owner is recorded beside the files, in a dot file the static provider never serves, so the
-                // tree describes itself and publication adds no SQLite commit.
-                var statePath = Path.Combine(directory, ".export.json");
-                var state = File.Exists(statePath) ? Json.Read<PathState>(File.ReadAllText(statePath)) : null;
-                if (state != null && state.Created > snapshot.Created) return true;
-                if (state == null && files.Count == 0) return true;
-                Directory.CreateDirectory(directory);
-                foreach (var (name, file) in files) Link(Path.Combine(directory, name), Blobs.PathFor(file.Sha256));
-                foreach (var stale in (state?.Names ?? []).Except(files.Keys, StringComparer.Ordinal)) File.Delete(Path.Combine(directory, stale));
-                var temp = Path.Combine(directory, $".{Guid.NewGuid():N}.tmp");
-                File.WriteAllText(temp, Json.Write(new PathState(snapshot.Id, snapshot.Created, files.Keys.Order(StringComparer.Ordinal).ToArray())));
-                File.Move(temp, statePath, true);
+                var scope = PathScope(region, snapshot.Locale);
+                if (scope == null || snapshot.Region != scope.Region || snapshot.BiliVersion != scope.BiliVersion) continue;
+                var directory = Path.Combine([region == null ? PublicRoot : Path.Combine(RegionsRoot, region), snapshot.Locale, .. segments]);
+                lock (treeGate)
+                {
+                    // The owner is recorded beside the files, in a dot file the static provider never serves, so the
+                    // tree describes itself and publication adds no SQLite commit.
+                    var statePath = Path.Combine(directory, ".export.json");
+                    var state = File.Exists(statePath) ? Json.Read<PathState>(File.ReadAllText(statePath)) : null;
+                    if (state != null && state.Created > snapshot.Created) continue;
+                    if (state == null && files.Count == 0) continue;
+                    Directory.CreateDirectory(directory);
+                    foreach (var (name, file) in files) Link(Path.Combine(directory, name), Blobs.PathFor(file.Sha256));
+                    foreach (var stale in (state?.Names ?? []).Except(files.Keys, StringComparer.Ordinal)) File.Delete(Path.Combine(directory, stale));
+                    var temp = Path.Combine(directory, $".{Guid.NewGuid():N}.tmp");
+                    File.WriteAllText(temp, Json.Write(new PathState(snapshot.Id, snapshot.Created, files.Keys.Order(StringComparer.Ordinal).ToArray())));
+                    File.Move(temp, statePath, true);
+                }
             }
             return true;
         }

@@ -1,11 +1,15 @@
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Caching.Memory;
 namespace MoenotesAssets;
 
-// Path routes expose published files as /{locale}/{key}/{label}{extension}; export and file IDs stay internal.
+// Path routes expose published files as /{locale}/{key}/{label}{extension} (default region) and
+// /{region}/{locale}/{key}/{label}{extension} (any configured region); export and file IDs stay internal.
 public sealed partial class AssetService
 {
     public sealed record PathEntry(string? Path, string File, string Label, string MediaType, long Bytes, string Sha256, object? Metadata);
-    public sealed record PathListing(string Locale, string Key, string Snapshot, PathEntry[] Files);
+    // Region is set for /{region}/{locale}/ listings only, so /{locale}/ listings keep their fields.
+    public sealed record PathListing(string Locale, string Key, string Snapshot, PathEntry[] Files,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Region = null);
     /// <summary>A key's newest published export: files by path name and its listing.</summary>
     public sealed record PathResolution(Manifest Manifest, IReadOnlyDictionary<string, PublishedFile> Files, PathListing Listing);
     // Resolutions (including misses) and scope snapshot lists carry the store versions they were read at and are
@@ -18,30 +22,30 @@ public sealed partial class AssetService
     private static MemoryCacheEntryOptions CacheEntry(int files = 0) => new() { Size = 1 + files, SlidingExpiration = TimeSpan.FromMinutes(30) };
 
     /// <summary>
-    /// The newest published export of a key in a configured locale of the default region. The current snapshot
-    /// comes first, then older retained ones, so a catalog refresh does not hide files until its export finishes.
+    /// The newest published export of a key in a configured locale of <paramref name="region"/> (null: the default
+    /// region's /{locale}/ route). The current snapshot comes first, then older retained ones, so a catalog refresh
+    /// does not hide files until its export finishes.
     /// </summary>
-    public PathResolution? ResolvePath(string locale, string key)
+    public PathResolution? ResolvePath(string? region, string locale, string key)
     {
-        var region = Config.ForRegion();
-        var locales = region.Locales.Length == 0 ? [region.Locale] : region.Locales;
-        if (key.Length == 0 || !locales.Contains(locale, StringComparer.Ordinal)) return null;
+        var scope = PathScope(region, locale);
+        if (key.Length == 0 || scope == null) return null;
         // Read the versions before the database, so a concurrent publish leaves this entry stale rather than wrong.
         var generation = Store.SnapshotGeneration; var version = Store.ExportVersion(key);
-        var cacheKey = ("path", locale, key);
+        var cacheKey = ("path", region, locale, key);
         if (pathCache.TryGetValue(cacheKey, out Stamped<PathResolution?>? cached) && cached!.Generation == generation && cached.Version == version)
             return cached.Value;
-        var candidates = ScopeSnapshots(region, locale, generation)
+        var candidates = ScopeSnapshots(scope, locale, generation)
             .SelectMany(snapshot => new[] { Crypto.Identity(snapshot, key, Worker.Profile), Crypto.Identity(snapshot, key, Worker.MovieProfile) }).ToArray();
         var manifest = Store.FirstExport(candidates);
-        var resolution = manifest == null ? null : new PathResolution(manifest, PathFiles(manifest), Listing(locale, manifest));
+        var resolution = manifest == null ? null : new PathResolution(manifest, PathFiles(manifest), Listing(region, locale, manifest));
         pathCache.Set(cacheKey, new Stamped<PathResolution?>(resolution, generation, version), CacheEntry(manifest?.Files.Length ?? 0));
         return resolution;
     }
 
     private string[] ScopeSnapshots(Config region, string locale, long generation)
     {
-        var cacheKey = ("scope", locale);
+        var cacheKey = ("scope", region.Region, locale);
         if (pathCache.TryGetValue(cacheKey, out Stamped<string[]>? cached) && cached!.Generation == generation) return cached.Value;
         var snapshots = Store.ScopeSnapshots(region.Region, locale, region.BiliVersion);
         pathCache.Set(cacheKey, new Stamped<string[]>(snapshots, generation, 0), CacheEntry());
@@ -94,13 +98,14 @@ public sealed partial class AssetService
         return files;
     }
 
-    public static PathListing Listing(string locale, Manifest manifest)
+    public static PathListing Listing(string? region, string locale, Manifest manifest)
     {
         var names = PathNamesById(manifest); var addressable = manifest.Key.Split('/').All(SafeSegment);
+        var prefix = region == null ? new[] { locale } : [region, locale];
         return new(locale, manifest.Key, manifest.Snapshot, manifest.Files.Select(file =>
         {
-            var path = addressable && names.TryGetValue(file.Id, out var name) ? "/" + string.Join('/', new[] { locale }.Concat(manifest.Key.Split('/')).Append(name).Select(Uri.EscapeDataString)) : null;
+            var path = addressable && names.TryGetValue(file.Id, out var name) ? "/" + string.Join('/', prefix.Concat(manifest.Key.Split('/')).Append(name).Select(Uri.EscapeDataString)) : null;
             return new PathEntry(path, "/files/" + file.Id, file.Label, file.MediaType, file.Bytes, file.Sha256, file.Metadata);
-        }).ToArray());
+        }).ToArray(), region);
     }
 }

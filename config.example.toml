@@ -69,6 +69,7 @@ allow_loopback_http = false
 # Entry name in version_url's document (default: id; "" leaves the region untracked).
 # metadata_region = "hk-tw-mo"
 
+# Every region's exports are served at /{region}/{locale}/{key}/...; /{locale}/{key}/... serves the default region.
 # JP: add this to an existing regions array (also keep an entry for the default region).
 # Or use region="jp", locale="ja", locales=["ja"] and its cdn_root at the top level.
 # Requires version_url; run `update` / POST /versions/check before the first manual refresh.

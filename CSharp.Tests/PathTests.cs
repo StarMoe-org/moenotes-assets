@@ -16,8 +16,9 @@ public class PathTests
         var files = AssetService.PathFiles(manifest);
         Assert.Equal(["Luck.m4a", "Luck__00001.m4a", "Same.png", "a b.m4a", "dir.m4a"], files.Keys);
         Assert.Equal(["a", "b", "c", "e", "f"], files.Values.Select(f => f.Id));
-        var listing = AssetService.Listing("ja", manifest);
+        var listing = AssetService.Listing(null, "ja", manifest);
         Assert.Equal(["/ja/Cri/Sound/Se/Luck.m4a", "/ja/Cri/Sound/Se/Luck__00001.m4a", "/ja/Cri/Sound/Se/Same.png", "/ja/Cri/Sound/Se/Same.png", "/ja/Cri/Sound/Se/a%20b.m4a", "/ja/Cri/Sound/Se/dir.m4a", null], listing.Files.Select(f => f.Path));
         Assert.All(listing.Files, f => Assert.StartsWith("/files/", f.File));
+        Assert.Equal("/jp/ja/Cri/Sound/Se/a%20b.m4a", AssetService.Listing("jp", "ja", manifest).Files[4].Path);
     }
 }

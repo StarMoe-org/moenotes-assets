@@ -35,7 +35,7 @@ public sealed partial class AssetService : IAsyncDisposable
         instance = new FileStream(Path.Combine(Config.DataDir, "instance.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         try
         {
-            foreach (var name in new[] { "tmp", "exports", "catalogs", "blobs", "public", "versions" })
+            foreach (var name in new[] { "tmp", "exports", "catalogs", "blobs", "public", "regions", "versions" })
             {
                 var path = Path.Combine(Config.DataDir, name);
                 Require(!Directory.Exists(path) || !File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint), "Symlink storage directory");

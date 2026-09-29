@@ -98,40 +98,45 @@ public static class Api
             FileProvider = new PhysicalFileProvider(service.VersionsRoot), // excludes dot-prefixed temporary files
             OnPrepareResponse = file => file.Context.Response.Headers.CacheControl = "public,max-age=60",
         });
-        // Path routes: public/{locale}/{key}/{label}{ext} is a tree of hard links written at publication
-        // (AssetService.MaterializePaths), served as static files without SQLite. Paths follow the newest published
-        // export, so they get a short cache; /files/{id} stays immutable.
+        // Path routes: public/{locale}/{key}/{label}{ext} (default region) and regions/{region}/{locale}/{key}/{label}{ext}
+        // are trees of hard links written at publication (AssetService.MaterializePaths), served as static files without
+        // SQLite. Paths follow the newest published export, so they get a short cache; /files/{id} stays immutable.
+        // /{region}/{locale}/ is tried first, as a region ID can equal a locale (en): asset keys never start with a locale.
         var contentTypes = new FileExtensionContentTypeProvider();
         contentTypes.Mappings[".txt"] = contentTypes.Mappings[".sus"] = "text/plain; charset=utf-8";
-        app.UseStaticFiles(new StaticFileOptions
-        {
-            FileProvider = new PhysicalFileProvider(service.PublicRoot), // excludes dot-prefixed temporary links
-            ContentTypeProvider = contentTypes,
-            ServeUnknownFileTypes = true,
-            DefaultContentType = "application/octet-stream",
-            OnPrepareResponse = file => file.Context.Response.Headers.CacheControl = "public,max-age=600",
-        });
-        // What the tree cannot answer under a locale: /{locale}/{key}/ listings, misses before the backfill finishes
-        // (resolved from SQLite), and 404s, which are publicly cacheable so repeated misses stop at the CDN.
+        foreach (var root in new[] { service.RegionsRoot, service.PublicRoot })
+            app.UseStaticFiles(new StaticFileOptions
+            {
+                FileProvider = new PhysicalFileProvider(root), // excludes dot-prefixed temporary links
+                ContentTypeProvider = contentTypes,
+                ServeUnknownFileTypes = true,
+                DefaultContentType = "application/octet-stream",
+                OnPrepareResponse = file => file.Context.Response.Headers.CacheControl = "public,max-age=600",
+            });
+        // What the trees cannot answer under a locale: {key}/ listings, misses before the backfill finishes (resolved
+        // from SQLite), and 404s, which are publicly cacheable so repeated misses stop at the CDN.
         app.Use(async (context, next) =>
         {
             var request = context.Request; var parts = request.Path.Value!.Split('/', 3);
-            if (!(HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method)) || context.GetEndpoint() != null || parts.Length < 3 || !service.IsPathLocale(parts[1]))
+            if (!(HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method)) || context.GetEndpoint() != null || parts.Length < 3)
             {
                 await next(context); return;
             }
-            var (locale, rest) = (parts[1], parts[2]);
+            var nested = parts[2].Split('/', 2);
+            var (region, locale, rest) = nested.Length == 2 && service.PathScope(parts[1], nested[0]) != null ? (parts[1], nested[0], nested[1])
+                : service.IsPathLocale(parts[1]) ? ((string?)null, parts[1], parts[2]) : (null, "", "");
+            if (locale.Length == 0) { await next(context); return; }
             IResult result;
             if (rest.Length == 0 || rest.EndsWith('/'))
             {
-                var listed = service.ResolvePath(locale, rest.TrimEnd('/'));
+                var listed = service.ResolvePath(region, locale, rest.TrimEnd('/'));
                 if (listed != null) context.Response.Headers.CacheControl = "public,max-age=60";
                 result = listed != null ? Results.Json(listed.Listing, Json.Options) : NotFound(context);
             }
             else
             {
                 var slash = rest.LastIndexOf('/');
-                var resolved = !service.PublicTreeReady && slash > 0 ? service.ResolvePath(locale, rest[..slash]) : null;
+                var resolved = !service.PublicTreeReady && slash > 0 ? service.ResolvePath(region, locale, rest[..slash]) : null;
                 result = resolved != null && resolved.Files.TryGetValue(rest[(slash + 1)..], out var file)
                     ? ServeFile(context, file.Id, "public,max-age=600") : NotFound(context);
             }

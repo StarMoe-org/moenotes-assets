@@ -49,14 +49,17 @@ key from a trusted backend/admin client over HTTPS, not public frontend code.
 | POST | /tasks/{id}/cancel | Cancel; terminal tasks remain unchanged |
 | GET | /exports/{id} | Published manifest |
 | GET, HEAD | /files/{id} | File with Range, ETag and conditional requests |
-| GET, HEAD | /{locale}/{key}/{label}.{ext} | Newest published file by asset path (see Path routes) |
+| GET, HEAD | /{locale}/{key}/{label}.{ext} | Newest published file by asset path, default region (see Path routes) |
 | GET | /{locale}/{key}/ | Files of a key's newest published export, with their paths |
+| GET, HEAD | /{region}/{locale}/{key}/{label}.{ext} | The same for any configured region |
+| GET | /{region}/{locale}/{key}/ | Listing for any configured region (adds `region`) |
 
 ## Path routes
 
 Published files are also addressable by asset path, so a site can build URLs without
 knowing IDs: `/{locale}/{key}/{label}{extension}`, for a configured locale of the
-default region. The label is the file's source label and the extension comes from the
+default region, and `/{region}/{locale}/{key}/{label}{extension}`, for a configured
+locale of any configured region (the default one included). The label is the file's source label and the extension comes from the
 published file (`.webp`, `.png`, `.json`, `.m4a`, `.mp4`, …). Movie labels are their
 full asset key, so a label made of path segments contributes its last one, for example:
 
@@ -66,10 +69,18 @@ GET /en/Adv/Episode/adv_script_mygo_001_1_01/adv_script_mygo_001_1_01-Text/adv_s
 GET /ja/Cri/Sound/A_Abracadabra/A_Abracadabra.m4a
 GET /ja/Cri/Video/adv/adv_movie_hekiten_mygo_07/adv_movie_hekiten_mygo_07/adv_movie_hekiten_mygo_07.mp4
 GET /ja/Cri/Sound/adv_voice_mygo_001_1_01/          (listing)
+GET /jp/ja/Cri/Sound/A_Abracadabra/A_Abracadabra.m4a (the jp region)
+GET /en/en/Cri/Sound/A_Abracadabra/A_Abracadabra.m4a (an "en" region; /en/... stays the default region)
 ```
 
-Paths are a static file tree. Publishing an export links its files into
-`/data/public/{locale}/{key}/{label}{extension}` as hard links to the content-addressed
+A region ID may equal a locale. `/{region}/{locale}/` is matched first, and only when
+the region is configured and lists that locale; otherwise the first segment is a locale
+of the default region. Asset keys never start with a locale, so both forms stay
+unambiguous. Region listings carry `region`; default-region listings are unchanged.
+
+Paths are static file trees. Publishing an export links its files into
+`/data/public/{locale}/{key}/{label}{extension}` (default region only) and
+`/data/regions/{region}/{locale}/{key}/{label}{extension}` as hard links to the content-addressed
 blobs (copies if the filesystem refuses links), so identical files in several languages
 share one blob and requests are served by the static file middleware without SQLite.
 Each link is created under a dot-prefixed temporary name and renamed into place; the
@@ -279,7 +290,8 @@ atomically and served with `Cache-Control: public,max-age=60`:
 - `{region}/{resource_version}/diff/{locale}.json`: `{from, to, summary, added, changed,
   removed, failed}`. Keys are compared by the label, media type and sha256 of their published
   files, so a re-export with identical bytes is unchanged. `added`/`changed` entries list the
-  new or changed `files` by path name (`/{locale}/{key}/{name}`); `failed` entries carry the
+  new or changed `files` by path name (`/{region}/{locale}/{key}/{name}`, and `/{locale}/{key}/{name}` for the
+  default region); `failed` entries carry the
   export error and are not also listed as removed. Unchanged keys are only counted.
 
 ## Chart site
