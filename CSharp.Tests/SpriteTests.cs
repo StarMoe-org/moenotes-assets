@@ -95,11 +95,14 @@ public class SpriteTests
             var (a, b, c) = (vertices[triangles[t]], vertices[triangles[t + 1]], vertices[triangles[t + 2]]);
             if (Math.Abs(Cross(b - a, c - a)) < 0.000001) continue;
             var r = Bounds(t);
-            for (var y = r.Bottom; y <= r.Top; y++) for (var x = r.Left; x <= r.Right; x++)
+            for (var y = r.Bottom; y <= r.Top; y++)
+            {
+                for (var x = r.Left; x <= r.Right; x++)
                 {
                     var p = new System.Numerics.Vector2(x + 0.5f, y + 0.5f); var e0 = Cross(b - a, p - a); var e1 = Cross(c - b, p - b); var e2 = Cross(a - c, p - c);
                     if ((e0 >= 0 && e1 >= 0 && e2 >= 0) || (e0 <= 0 && e1 <= 0 && e2 <= 0)) expected[y * size + x] = true;
                 }
+            }
         }
         Assert.Equal(expected, Enumerable.Range(0, size * size).Select(i => pixels[i * 4 + 3] != 0));
         (int Left, int Right, int Bottom, int Top) Bounds(int t)

@@ -104,7 +104,9 @@ public static class SpriteGeometry
         var w = (int)(width / multiplier); var h = (int)(height / multiplier);
         Require(w is > 0 and <= 16384 && h is > 0 and <= 16384 && (long)w * h * 4 <= limit, "Sprite resize budget");
         var result = new byte[checked(w * h * 4)];
-        for (int y = 0; y < h; y++) for (int x = 0; x < w; x++)
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
             {
                 var sx = Math.Clamp((x + 0.5) * width / w - 0.5, 0, width - 1); var sy = Math.Clamp((y + 0.5) * height / h - 0.5, 0, height - 1);
                 int x0 = (int)sx, y0 = (int)sy, x1 = Math.Min(x0 + 1, width - 1), y1 = Math.Min(y0 + 1, height - 1); var fx = sx - x0; var fy = sy - y0;
@@ -112,6 +114,7 @@ public static class SpriteGeometry
                     (pixels[(y0 * width + x0) * 4 + channel] * (1 - fx) + pixels[(y0 * width + x1) * 4 + channel] * fx) * (1 - fy) +
                     (pixels[(y1 * width + x0) * 4 + channel] * (1 - fx) + pixels[(y1 * width + x1) * 4 + channel] * fx) * fy);
             }
+        }
         return (result, w, h);
     }
 }

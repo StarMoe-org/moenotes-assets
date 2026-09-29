@@ -15,11 +15,14 @@ public class TextureTests
         using var original = SkiaSharp.SKBitmap.Decode(File.ReadAllBytes(Path.Combine(job.Output, png.Name)));
         using var converted = SkiaSharp.SKBitmap.Decode(File.ReadAllBytes(Path.Combine(job.Output, webp.Name)));
         Assert.NotNull(converted); Assert.Equal(original.Width, converted.Width); Assert.Equal(original.Height, converted.Height);
-        for (int y = 0; y < original.Height; y++) for (int x = 0; x < original.Width; x++)
+        for (int y = 0; y < original.Height; y++)
+        {
+            for (int x = 0; x < original.Width; x++)
             {
                 var a = original.GetPixel(x, y); var b = converted.GetPixel(x, y);
                 Assert.Equal(a.Alpha, b.Alpha); if (a.Alpha > 0) Assert.Equal(a, b);
             }
+        }
     }
     [Fact]
     public async Task RgbaTextureToPngHasCorrectDimensionsAndOrientation()

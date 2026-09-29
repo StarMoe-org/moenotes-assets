@@ -332,11 +332,14 @@ public static class Worker
         {
             var transformed = new byte[pixels.Length]; int newWidth = rotation == 4 ? height : width, newHeight = rotation == 4 ? width : height;
             Require(rotation <= 4, "Unsupported sprite rotation");
-            for (int row = 0; row < height; row++) for (int col = 0; col < width; col++)
+            for (int row = 0; row < height; row++)
+            {
+                for (int col = 0; col < width; col++)
                 {
                     var (dx, dy) = rotation switch { 1 => (width - 1 - col, row), 2 => (col, height - 1 - row), 3 => (width - 1 - col, height - 1 - row), 4 => (row, width - 1 - col), _ => (col, row) };
                     Buffer.BlockCopy(pixels, (row * width + col) * 4, transformed, (dy * newWidth + dx) * 4, 4);
                 }
+            }
             pixels = transformed; width = newWidth; height = newHeight;
         }
         if (((settings >> 1) & 1) == 0) SpriteGeometry.Mask(asset.baseField, data, pixels, width, height);
