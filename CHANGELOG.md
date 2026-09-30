@@ -20,6 +20,12 @@ changes require explicit release notes; a frozen stable API is not claimed.
 
 ## 0.2.0-csharp (unreleased)
 
+- Fix international updates continuing to download `catalog_main` after
+  `resource_version` changed. Pin the release's version and CDN roots through
+  catalog refresh, all-language batches and restart recovery; preserve existing
+  browsing scopes and JP catalog behavior. Persist `catalog_version` and retry
+  old successful releases once so missing new resources are exported.
+
 - The chart site takes songs the default region lacks from other `[[regions]]` with their own `master_root` (e.g. a
   JP-only song), falls back to Japanese titles, and tags each chart with the servers that have it (`regions`).
 

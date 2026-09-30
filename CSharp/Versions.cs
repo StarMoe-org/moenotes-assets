@@ -17,7 +17,7 @@ public sealed record ReleaseLocale(string Locale, string State, string? Snapshot
 // State is queued until the batch ends, then succeeded, partial, failed or cancelled.
 public sealed record Release(string Id, long Sequence, string Region, string MetadataRegion, string ResourceVersion, string CdnRoot,
     string? ClientVersion, string? MasterVersion, string? VerifiedAt, string BatchId, string State, long Detected, ReleaseLocale[] Locales,
-    long? Completed = null, string? Previous = null, JpAssetSource? Assets = null);
+    long? Completed = null, string? Previous = null, JpAssetSource? Assets = null, string? CatalogVersion = null);
 // Action: queued, pending (already queued), current, master (master data changed at the same resource version),
 // cancelled, untracked, missing, invalid or error (see Error).
 public sealed record VersionCheckRegion(string Region, string? MetadataRegion, string Action, string? ResourceVersion = null,
@@ -69,6 +69,8 @@ public sealed partial class AssetService
     /// <summary>The CDN roots of the region's latest detected release, which refreshes follow instead of cdn_root.</summary>
     private string? ReleaseCdnRoot(string region) => Config.MetadataRegionFor(region) == null ? null : Releases().LastOrDefault(r => r.Region == region)?.CdnRoot;
     private JpAssetSource? ReleaseAssets(string region) => Config.MetadataRegionFor(region) == null ? null : Releases().LastOrDefault(r => r.Region == region)?.Assets;
+    private string? ReleaseCatalogVersion(string region) => Config.MetadataRegionFor(region) != null &&
+        Releases().LastOrDefault(r => r.Region == region) is { Assets: null } release ? release.ResourceVersion : null;
     private static string ReleasePath(Release release) => release.ResourceVersion + (release.Assets == null ? "" : "-" + release.Assets.Hash);
 
     /// <summary>Checks version_url now and every version_poll_secs while serving; a failed check is logged and retried on the next tick.</summary>
@@ -114,7 +116,11 @@ public sealed partial class AssetService
                 catch (Exception e) when (e is JsonException or InvalidOperationException or NullReferenceException)
                 { results.Add(new(region, name, "invalid", Error: "Invalid resource metadata")); continue; }
                 var latest = Releases().LastOrDefault(r => r.Region == region);
-                if (latest != null && latest.ResourceVersion == entry.ResourceVersion && latest.CdnRoot == entry.CdnRoot && latest.Assets == entry.Assets && (latest.State == "queued" || (!force && latest.State != "failed")))
+                var catalogVersion = entry.Assets == null ? entry.ResourceVersion : null;
+                // Old international releases used catalog_main even after the resource version changed.
+                // Recollect those once, but let an already queued batch finish before correcting it.
+                if (latest != null && latest.ResourceVersion == entry.ResourceVersion && latest.CdnRoot == entry.CdnRoot && latest.Assets == entry.Assets &&
+                    (latest.State == "queued" || (!force && (latest.State == "cancelled" || latest.State != "failed" && latest.CatalogVersion == catalogVersion))))
                 {
                     var action = latest.State switch { "queued" => "pending", "cancelled" => "cancelled", _ => "current" };
                     // Master data changes without a resource version (songs unlocked by master rows alone): record it and
@@ -132,11 +138,11 @@ public sealed partial class AssetService
                 // Held under releaseGate until the release is stored, so a batch that ends at once still finds it.
                 var id = region + ":" + entry.ResourceVersion + (entry.Assets == null ? "" : ":" + entry.Assets.Hash);
                 BatchInfo batch;
-                try { batch = StartBatch(new(region), entry.CdnRoot, id, entry.Assets); }
+                try { batch = StartBatch(new(region), entry.CdnRoot, id, entry.Assets, catalogVersion); }
                 catch (ApiException e) { results.Add(new(region, name, "error", entry.ResourceVersion, Error: e.Message)); continue; } // queue full: next check
                 catch (InvalidDataException e) { results.Add(new(region, name, "invalid", entry.ResourceVersion, Error: e.Message)); continue; }
                 Store.Put("release", id, new Release(id, batch.Sequence, region, name, entry.ResourceVersion, entry.CdnRoot, entry.ClientVersion,
-                    entry.MasterVersion, entry.VerifiedAt, batch.Id, "queued", Now, [], Assets: entry.Assets));
+                    entry.MasterVersion, entry.VerifiedAt, batch.Id, "queued", Now, [], Assets: entry.Assets, CatalogVersion: catalogVersion));
                 Console.Error.WriteLine($"[versions] {region} resource_version {entry.ResourceVersion} ({name}, was {latest?.ResourceVersion ?? "none"}) queued batch {batch.Id} from {entry.CdnRoot}");
                 results.Add(new(region, name, "queued", entry.ResourceVersion, id, batch.Id));
             }
@@ -301,6 +307,7 @@ public sealed partial class AssetService
     private static object View(Release r) => new
     {
         r.ResourceVersion,
+        r.CatalogVersion,
         resource_hash = r.Assets?.Hash,
         r.Assets,
         r.ClientVersion,

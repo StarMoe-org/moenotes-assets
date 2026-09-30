@@ -119,6 +119,15 @@ Current pointers are independent per region/locale/version. To browse a differen
 version, obtain its ID from `/catalogs` and pass `snapshot`. Pin that ID while
 paginating; refreshing retains previous snapshots.
 
+For tracked international releases, the configured `version`/`bili_version` is
+the browsing scope, while `catalog_version` records the resource version used in
+the downloaded catalog filename. Releases, snapshots and batches persist this
+selector across restarts. `/versions/` documents include `catalog_version`;
+an older successful release without it is corrected at the next version check.
+A manual `/catalog/refresh` with no `version` follows the latest detected
+release; an explicit `version` requests that catalog. New versioned catalogs
+never fall back to `catalog_main` on failure.
+
 Lists accept `prefix`, `offset` (default 0), and `limit` (default 100, capped at
 1000). Offset must be between 0 and 10000000; limit must be nonnegative.
 `/assets` also accepts `resource_type` and `bundle` (bundle ID).

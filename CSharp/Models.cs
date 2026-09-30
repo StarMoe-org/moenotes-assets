@@ -16,7 +16,7 @@ public static class Json
     public static T Read<T>(ReadOnlySpan<byte> utf8) => JsonSerializer.Deserialize<T>(utf8, Options) ?? throw new InvalidDataException("Null JSON document");
 }
 public sealed record Snapshot(string Id, string ContentSha256, string Region, string Locale, string BiliVersion,
-    string CdnRoot, string RemoteHash, long Created, JpAssetSource? Assets = null);
+    string CdnRoot, string RemoteHash, long Created, JpAssetSource? Assets = null, string? CatalogVersion = null);
 public sealed record ExportRequest(string[]? Keys = null, string? Prefix = null, string? Snapshot = null, string? Region = null, string? Locale = null);
 public sealed record ItemResult(string Key, string? ExportId, string? Error, string? SkipReason = null, bool Reused = false);
 public sealed record TaskInfo(string Id, string Kind, string State, string? Snapshot, int Total, int Completed,

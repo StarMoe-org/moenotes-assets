@@ -185,11 +185,14 @@ public sealed record Config
             uri.Host is "127.0.0.1" or "[::1]"), "HTTPS CDN required");
         return uri;
     }
-    public Uri CatalogUri(string extension)
+    public Uri CatalogUri(string extension, string? catalogVersion = null)
     {
         Require(extension is "bin" or "hash", "Invalid catalog extension");
+        var selectedVersion = catalogVersion ?? BiliVersion;
+        Require(selectedVersion.Length is > 0 and <= 64 && char.IsAsciiLetterOrDigit(selectedVersion[0]) &&
+            !selectedVersion.Contains("..") && selectedVersion.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-'), "Invalid catalog version");
         var locale = Locale.Length == 0 ? "" : $"_{Locale}";
-        return new Uri($"{Root().AbsoluteUri.TrimEnd('/')}/asset/Android/catalog_{BiliVersion}{locale}.{extension}");
+        return new Uri($"{Root().AbsoluteUri.TrimEnd('/')}/asset/Android/catalog_{selectedVersion}{locale}.{extension}");
     }
     public Uri AssetUri(string id)
     {

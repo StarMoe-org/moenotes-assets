@@ -17,6 +17,105 @@ public class VersionTests
     private static string Address(WebApplication app) => app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
 
     [Fact]
+    public async Task ResourceVersionSelectsCatalogAtTheSameRootAndRepairsOldReleases()
+    {
+        using var dir = new TempDirectory();
+        var old = Fixture.Create(); var updated = Fixture.Create("{\"fixture\":2026}"u8.ToArray());
+        var requests = new ConcurrentQueue<string>(); string version = "1.0.0.1", root = "";
+        var builder = WebApplication.CreateBuilder(); builder.Logging.ClearProviders(); builder.WebHost.UseUrls("http://127.0.0.1:0");
+        await using var upstream = builder.Build();
+        upstream.MapGet("/current_version.json", () => Results.Text(new JsonObject
+        {
+            ["regions"] = new JsonObject { ["hk-tw-mo"] = new JsonObject { ["resource_version"] = version, ["server"] = new JsonObject { ["cdnRoot"] = root } } }
+        }.ToJsonString(), "application/json"));
+        upstream.MapGet("/asset/Android/{file}", (string file) =>
+        {
+            requests.Enqueue(file);
+            if (file.StartsWith("catalog_", StringComparison.Ordinal))
+            {
+                if (file is "catalog_1.0.0.1_en.hash" or "catalog_1.0.0.2_en.hash" or "catalog_main_en.hash") return Results.Text(file);
+                if (file == "catalog_1.0.0.1_en.bin" || file == "catalog_main_en.bin") return Results.Bytes(old.Catalog);
+                if (file == "catalog_1.0.0.2_en.bin") return Results.Bytes(updated.Catalog);
+                return Results.NotFound();
+            }
+            return Results.Bytes(version == "1.0.0.1" ? old.Bundle : updated.Bundle);
+        });
+        await upstream.StartAsync(); root = Address(upstream);
+        var config = new Config
+        {
+            DataDir = dir.Path,
+            AllowLoopbackHttp = true,
+            Region = "tw",
+            MetadataRegion = "hk-tw-mo",
+            Locale = "en",
+            CdnRoot = root,
+            VersionUrl = root + "/current_version.json"
+        };
+        string currentSnapshot, releaseId;
+        await using (var service = new AssetService(config))
+        {
+            var first = await service.WaitRelease((await service.CheckVersions()).Regions[0].Release!).WaitAsync(TimeSpan.FromSeconds(60));
+            Assert.Equal("succeeded", first.State);
+            Assert.Equal("1.0.0.1", first.CatalogVersion);
+            Assert.Equal("1.0.0.1", service.GetBatch(first.BatchId).CatalogVersion);
+            Assert.Equal("main", service.ResolveSnapshot().BiliVersion);
+            Assert.Equal("1.0.0.1", service.ResolveSnapshot().CatalogVersion);
+            version = "1.0.0.2";
+            var second = await service.WaitRelease((await service.CheckVersions()).Regions[0].Release!).WaitAsync(TimeSpan.FromSeconds(60));
+            Assert.Equal("succeeded", second.State);
+            Assert.Equal(1, Assert.Single(second.Locales).Diff!.Changed);
+            Assert.NotEqual(first.Locales[0].Snapshot, second.Locales[0].Snapshot);
+            currentSnapshot = second.Locales[0].Snapshot!; releaseId = second.Id;
+            Assert.Equal(currentSnapshot, service.ResolveSnapshot().Id);
+            Assert.Equal(currentSnapshot, (await service.Wait(service.StartRefresh().Id)).Snapshot);
+            Assert.Contains("catalog_1.0.0.1_en.bin", requests);
+            Assert.Contains("catalog_1.0.0.2_en.bin", requests);
+            Assert.DoesNotContain(requests, path => path.StartsWith("catalog_main", StringComparison.Ordinal));
+            // Old persisted releases have no catalog_version, even when reported succeeded.
+            var legacy = JsonNode.Parse(Json.Write(second))!.AsObject(); legacy.Remove("catalog_version");
+            service.Store.Put("release", second.Id, Json.Read<Release>(legacy.ToJsonString()));
+        }
+        await using (var restarted = new AssetService(config))
+        {
+            var catchup = Assert.Single((await restarted.CheckVersions()).Regions);
+            Assert.Equal(("queued", releaseId), (catchup.Action, catchup.Release));
+            var corrected = await restarted.WaitRelease(releaseId).WaitAsync(TimeSpan.FromSeconds(60));
+            Assert.Equal(("succeeded", "1.0.0.2"), (corrected.State, corrected.CatalogVersion));
+            Assert.Equal(currentSnapshot, restarted.ResolveSnapshot().Id);
+            Assert.Equal("current", Assert.Single((await restarted.CheckVersions()).Regions).Action);
+            var batch = restarted.StartBatch(new(Export: false));
+            Assert.Equal(("main", "1.0.0.2"), (batch.Version, batch.CatalogVersion));
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            while (restarted.GetBatch(batch.Id).State is "queued" or "running") await Task.Delay(20, timeout.Token);
+            Assert.Equal("succeeded", restarted.GetBatch(batch.Id).State);
+            Assert.Equal(currentSnapshot, restarted.ResolveSnapshot().Id);
+            // A missing new catalog must fail, never quietly use catalog_main.
+            version = "1.0.0.3";
+            var missing = await restarted.WaitRelease((await restarted.CheckVersions()).Regions[0].Release!).WaitAsync(TimeSpan.FromSeconds(60));
+            Assert.Equal("failed", missing.State);
+            Assert.Equal(currentSnapshot, restarted.ResolveSnapshot().Id);
+            Assert.DoesNotContain(requests, path => path.StartsWith("catalog_main", StringComparison.Ordinal));
+            // An explicit standalone refresh can still inspect the historical main catalog.
+            var historical = await restarted.Wait(restarted.StartRefresh(version: "main").Id);
+            Assert.Equal("succeeded", historical.State);
+            Assert.NotEqual(currentSnapshot, historical.Snapshot);
+            Assert.Contains("catalog_main_en.bin", requests);
+        }
+        await upstream.StopAsync();
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("../x")]
+    [InlineData("1.0/other")]
+    [InlineData("1%2e0")]
+    [InlineData("1.0?x")]
+    public void CatalogVersionRejectsUnsafePaths(string version)
+    {
+        Assert.Throws<InvalidDataException>(() => new Config { CdnRoot = "https://cdn.example" }.CatalogUri("bin", version));
+    }
+
+    [Fact]
     public async Task NewResourceVersionUnpacksFromItsCdnRootAndPublishesVersionFiles()
     {
         using var dir = new TempDirectory();

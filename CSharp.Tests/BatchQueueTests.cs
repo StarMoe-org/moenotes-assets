@@ -72,11 +72,15 @@ public class BatchQueueTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task InterruptedBatchResumesAndCancelledBatchStaysCancelled(bool cancelActive)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task InterruptedBatchResumesAndCancelledBatchStaysCancelled(bool cancelActive, bool pinCatalog)
     {
         using var dir = new TempDirectory(); var fixture = Fixture.Create();
+        var catalogVersion = pinCatalog ? "1.0.0.201" : null;
+        var catalogPrefix = "catalog_" + (catalogVersion ?? "main");
         var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var requests = new ConcurrentQueue<string>(); var interrupt = true;
         var builder = WebApplication.CreateBuilder(); builder.Logging.ClearProviders(); builder.WebHost.UseUrls("http://127.0.0.1:0");
@@ -84,7 +88,7 @@ public class BatchQueueTests
         cdn.MapGet("/asset/Android/{file}", async (string file, HttpContext context) =>
         {
             requests.Enqueue(file);
-            if (file == "catalog_main_ja.hash" && interrupt)
+            if (file == catalogPrefix + "_ja.hash" && interrupt)
             {
                 blocked.TrySetResult(); await Task.Delay(Timeout.Infinite, context.RequestAborted);
             }
@@ -95,14 +99,14 @@ public class BatchQueueTests
         string id;
         await using (var service = new AssetService(config))
         {
-            id = service.StartBatch(new(Export: false)).Id;
+            id = service.StartBatch(new(Export: false), catalogVersion: catalogVersion).Id;
             await blocked.Task.WaitAsync(TimeSpan.FromSeconds(10));
             Assert.Equal("succeeded", service.GetBatch(id).Steps[0].State);
             if (cancelActive)
             {
                 service.CancelBatch(id);
                 interrupt = false;
-                var next = service.StartBatch(new(Locales: ["ja"], Export: false));
+                var next = service.StartBatch(new(Locales: ["ja"], Export: false), catalogVersion: catalogVersion);
                 Assert.Equal("succeeded", (await Finish(service, next.Id)).State);
             }
         }
@@ -110,8 +114,10 @@ public class BatchQueueTests
         await using (var service = new AssetService(config))
         {
             Assert.Equal(cancelActive ? "cancelled" : "succeeded", (await Finish(service, id)).State);
-            Assert.Equal(1, requests.Count(r => r == "catalog_main_en.hash"));
-            Assert.Equal(2, requests.Count(r => r == "catalog_main_ja.hash"));
+            Assert.Equal(catalogVersion, service.GetBatch(id).CatalogVersion);
+            Assert.Equal(catalogVersion, service.ResolveSnapshot(locale: "ja").CatalogVersion);
+            Assert.Equal(1, requests.Count(r => r == catalogPrefix + "_en.hash"));
+            Assert.Equal(2, requests.Count(r => r == catalogPrefix + "_ja.hash"));
         }
         await cdn.StopAsync();
     }

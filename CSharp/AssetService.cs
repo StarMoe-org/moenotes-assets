@@ -188,13 +188,16 @@ public sealed partial class AssetService : IAsyncDisposable
     /// Refreshes one catalog from <paramref name="cdnRoots"/> ("a|b": mirrors tried in order), else from the region's
     /// latest detected release (Versions.cs), else from the configured cdn_root. The snapshot records the root that answered.
     /// </summary>
-    public TaskInfo StartRefresh(string? region = null, string? locale = null, string? version = null, string? cdnRoots = null, JpAssetSource? assets = null) => Start("catalog_refresh", null, 1, async (task, token) =>
+    public TaskInfo StartRefresh(string? region = null, string? locale = null, string? version = null, string? cdnRoots = null, JpAssetSource? assets = null, string? catalogVersion = null) => Start("catalog_refresh", null, 1, async (task, token) =>
     {
         await refresh.WaitAsync(token);
         try
         {
             var selected = Config.ForRegion(region, locale, version);
             assets ??= ReleaseAssets(selected.Region);
+            // Keep the configured browsing scope (usually main), while pinning the
+            // actual catalog filename to the release being downloaded.
+            catalogVersion ??= assets == null && version == null ? ReleaseCatalogVersion(selected.Region) : null;
             Require(assets != null || Config.MetadataRegionFor(selected.Region) != "jp" && selected.Region != "jp", "Discover JP assets with a version check before refreshing");
             if (assets != null) { assets.Validate(Config); Require(selected.Locale is "" or "ja", "JP requires locale ja or empty"); }
             var roots = (cdnRoots ?? ReleaseCdnRoot(selected.Region) ?? selected.CdnRoot).Split('|');
@@ -212,9 +215,9 @@ public sealed partial class AssetService : IAsyncDisposable
                     }
                     else
                     {
-                        hash = new UTF8Encoding(false, true).GetString(await Fetch(selected.CatalogUri("hash"), 65536, token)).Trim();
+                        hash = new UTF8Encoding(false, true).GetString(await Fetch(selected.CatalogUri("hash", catalogVersion), 65536, token)).Trim();
                         Require(hash.Length <= 128, "Invalid catalog hash");
-                        bytes = await Fetch(selected.CatalogUri("bin"), 32 << 20, token);
+                        bytes = await Fetch(selected.CatalogUri("bin", catalogVersion), 32 << 20, token);
                     }
                     break;
                 }
@@ -227,7 +230,8 @@ public sealed partial class AssetService : IAsyncDisposable
             var digest = Crypto.Sha256(bytes);
             var id = Crypto.Identity(selected.Region, selected.Locale, selected.BiliVersion, selected.CdnRoot, digest);
             if (assets != null) id = Crypto.Identity(id, assets.Version, assets.Hash, assets.BundleRoot);
-            var snapshot = new Snapshot(id, digest, selected.Region, selected.Locale, selected.BiliVersion, selected.CdnRoot, hash, Now, assets);
+            else if (catalogVersion != null) id = Crypto.Identity(id, catalogVersion);
+            var snapshot = new Snapshot(id, digest, selected.Region, selected.Locale, selected.BiliVersion, selected.CdnRoot, hash, Now, assets, catalogVersion);
             var target = Path.Combine(Config.DataDir, "catalogs", digest + ".bin");
             token.ThrowIfCancellationRequested();
             if (!File.Exists(target))

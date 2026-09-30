@@ -234,6 +234,24 @@ release failed, a release is queued: one all-language batch that refreshes each 
 from the entry's CDN roots (`a|b` mirrors are tried in order) and exports it. Later manual
 refreshes of that region also use those roots instead of `cdn_root`.
 
+For TW/EN/KR, the release pins both the roots and `resource_version` when queuing
+its batch. Catalog requests use
+`<cdnRoot>/asset/Android/catalog_<resource_version>_<locale>.bin` (and `.hash`;
+omit the locale suffix for an empty locale). `catalog_main` is a separate,
+potentially old catalog: a missing versioned catalog fails explicitly instead
+of falling back to it. `cdnRoot` itself does not need to change for an update.
+The configured `bili_version` remains the browsing scope, so existing default
+asset/path/chart routes continue to resolve the new snapshot. The actual catalog
+selector is recorded as `catalog_version` on batches, snapshots and releases.
+An explicit standalone refresh `version` still selects that catalog directly.
+
+On upgrade, completed international releases without `catalog_version` are
+queued again once by the next version check, even at the same resource version.
+Already queued batches finish first; cancelled releases remain cancelled unless
+forced. Retained snapshots and exports are kept. Services with version polling
+disabled need `POST /versions/check` or the `update` CLI to start this correction.
+JP keeps its version/hash-specific `catalog_main.bin` path.
+
 When the batch ends the release is finalized and public JSON under `/versions/` is
 rewritten: `current_version.json` (latest completed release per region, plus pending ones),
 `index.json` (every release), and per release `{region}/{resource_version}/release.json`
