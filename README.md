@@ -222,6 +222,11 @@ and matching conversion inputs also reuse decoding across snapshots. First
 downloads are still required. Metadata candidate
 hashes alone never authorize reusing unverified remote content.
 
+Downloads can be skipped for previously verified identical bundle identities only
+within the same region and download root. JP's version/hash bundle root is
+part of that check. Output reuse and blob deduplication verify cached SHA256 values;
+missing or damaged outputs fail explicitly and existing data is retained for repair.
+
 ## Version tracking
 
 Set `version_url` to the metadata service's `current_version.json` (for example

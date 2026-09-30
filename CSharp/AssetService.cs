@@ -286,6 +286,7 @@ public sealed partial class AssetService : IAsyncDisposable
                         {
                             var id = Crypto.Identity(snapshot.Id, key, Worker.ProfileFor(catalog.Target(key)));
                             var manifest = Store.Get<Manifest>("export", id);
+                            if (manifest != null) Require(FilesPresent(manifest), "Stored output missing or hash mismatch");
                             if (manifest == null && ServedUnchanged(snapshot, catalog, key, fallbacks) is { } served) item = new(key, served.Id, null, Unchanged: true);
                             else
                             {
@@ -382,7 +383,8 @@ public sealed partial class AssetService : IAsyncDisposable
         var destination = Path.Combine(Config.DataDir, "exports", id);
         try
         {
-            var existing = Store.Get<Manifest>("export", id); if (existing != null) return existing;
+            var existing = Store.Get<Manifest>("export", id);
+            if (existing != null) { Require(FilesPresent(existing), "Stored output missing or hash mismatch"); return existing; }
             var (target, profile, locations) = ExportInputs(catalog, key);
             Require(locations.Sum(l => l.Options!.Size) <= Config.ExpandedBytes, "Dependency set budget");
             async Task<Manifest> Reuse(Manifest previous, Source[] sources)
@@ -458,7 +460,7 @@ public sealed partial class AssetService : IAsyncDisposable
             token.ThrowIfCancellationRequested();
             lock (storageGate)
             {
-                foreach (var file in files) Blobs.Publish(Path.Combine(output, file.Name), file.Sha256, file.Bytes);
+                Blobs.PublishBatch(files.Select(f => (Path.Combine(output, f.Name), f.Sha256, f.Bytes)));
                 Directory.Move(output, destination); moved = true; Store.Publish(manifest, true); moved = false;
             }
             MaterializePaths(manifest);
@@ -474,8 +476,17 @@ public sealed partial class AssetService : IAsyncDisposable
             }
         }
     }
-    private bool BlobsPresent(Manifest manifest) =>
-        manifest.Files.All(f => File.Exists(Blobs.PathFor(f.Sha256)) && new FileInfo(Blobs.PathFor(f.Sha256)).Length == f.Bytes);
+    private bool BlobsPresent(Manifest manifest) => manifest.Files.All(f => Blobs.Matches(f.Sha256, f.Bytes));
+    private bool FilesPresent(Manifest manifest) => manifest.Files.All(f =>
+        Store.Get<FileRecord>("file", f.Id) is { } record && BlobStore.Matches(FilePath(record), f.Sha256, f.Bytes));
+    // Descriptor equality only carries verified input evidence within the same download source.
+    // JP's placeholder paths are resolved under a version/hash-specific bundle root.
+    private bool SameDownloadSource(Snapshot snapshot, Manifest manifest)
+    {
+        var previous = Store.Get<Snapshot>("snapshot", manifest.Snapshot);
+        return previous != null && previous.Region == snapshot.Region
+            && previous.CdnRoot == snapshot.CdnRoot && previous.Assets?.BundleRoot == snapshot.Assets?.BundleRoot;
+    }
     /// <summary>
     /// Finds an earlier export of the same key whose dependencies have identical catalog identities
     /// (internal path, provider, hash, CRC, size), so their bytes and plain hashes are known without a download.
@@ -486,7 +497,7 @@ public sealed partial class AssetService : IAsyncDisposable
         if (Wanted(locations) is not { } wanted) return null;
         foreach (var candidate in Store.ExportsForKey(key))
         {
-            if (candidate.Snapshot == snapshot.Id || MatchSources(candidate, profile, wanted) is not { } sources) continue;
+            if (candidate.Snapshot == snapshot.Id || !SameDownloadSource(snapshot, candidate) || MatchSources(candidate, profile, wanted) is not { } sources) continue;
             var previousId = Store.Get<string>("conversion", ConversionId(snapshot, target, profile, locations, sources));
             var previous = previousId == null ? null : Store.Get<Manifest>("export", previousId);
             if (previous != null && BlobsPresent(previous)) return (previous, sources);
@@ -554,7 +565,7 @@ public sealed partial class AssetService : IAsyncDisposable
         if (Wanted(locations) is not { } wanted) return null;
         // The first match is what ResolvePath returns; an older identical export behind a changed one is not served.
         var served = Store.FirstExport(fallbacks.SelectMany(s => new[] { Crypto.Identity(s, key, Worker.Profile), Crypto.Identity(s, key, Worker.MovieProfile) }).ToArray());
-        if (served == null || MatchSources(served, profile, wanted) is not { } sources) return null;
+        if (served == null || !SameDownloadSource(snapshot, served) || !BlobsPresent(served) || MatchSources(served, profile, wanted) is not { } sources) return null;
         // A CRI key or class data change maps the same inputs to another conversion, so the key converts again.
         var canonical = Store.Get<string>("conversion", ConversionId(snapshot, target, profile, locations, sources));
         return canonical != null && (canonical == served.Id || canonical == served.ReusedFrom) ? served : null;
