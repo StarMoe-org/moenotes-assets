@@ -338,7 +338,7 @@ public sealed partial class AssetService
         var skip = ExportSelection.SkipReason(catalog, key);
         Require(skip == null, $"{key}: {skip}");
         var id = Crypto.Identity(snapshot.Id, key, Worker.ProfileFor(catalog.Target(key)));
-        var manifest = Store.Get<Manifest>("export", id);
+        var manifest = Store.Get<Manifest>("export", id) ?? ServedUnchanged(snapshot, catalog, key, FallbackSnapshots(snapshot));
         if (manifest != null) return manifest;
         using var lease = await exportWork.Join(id, t => ExportOne(snapshot, catalog, key, id, t), token);
         return lease.Value;

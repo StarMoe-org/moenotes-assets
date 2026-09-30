@@ -269,8 +269,9 @@ public sealed partial class AssetService : IAsyncDisposable
         if (request.Prefix != null) keys = ExportSelection.UniqueKeys(catalog, keys);
         return Start("export", snapshot.Id, keys.Length, async (task, token) =>
         {
+            var fallbacks = FallbackSnapshots(snapshot);
             // Skipped items are only counted: listing every unsupported object made progress documents megabytes.
-            var results = new List<ItemResult>(); int completed = 0, skipped = 0, reused = 0, succeeded = 0;
+            var results = new List<ItemResult>(); int completed = 0, skipped = 0, reused = 0, unchanged = 0, succeeded = 0;
             var progress = System.Diagnostics.Stopwatch.StartNew();
             try
             {
@@ -285,12 +286,16 @@ public sealed partial class AssetService : IAsyncDisposable
                         {
                             var id = Crypto.Identity(snapshot.Id, key, Worker.ProfileFor(catalog.Target(key)));
                             var manifest = Store.Get<Manifest>("export", id);
-                            if (manifest == null)
+                            if (manifest == null && ServedUnchanged(snapshot, catalog, key, fallbacks) is { } served) item = new(key, served.Id, null, Unchanged: true);
+                            else
                             {
-                                using var lease = await exportWork.Join(id, t => ExportOne(snapshot, catalog, key, id, t), ct);
-                                manifest = lease.Value;
+                                if (manifest == null)
+                                {
+                                    using var lease = await exportWork.Join(id, t => ExportOne(snapshot, catalog, key, id, t), ct);
+                                    manifest = lease.Value;
+                                }
+                                item = new(key, manifest.Id, null, Reused: manifest.ReusedFrom != null);
                             }
-                            item = new(key, manifest.Id, null, Reused: manifest.ReusedFrom != null);
                         }
                     }
                     catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
@@ -302,18 +307,20 @@ public sealed partial class AssetService : IAsyncDisposable
                         if (item.SkipReason != null) skipped++; else results.Add(item);
                         if (item.ExportId != null) succeeded++;
                         if (item.Reused) reused++;
+                        if (item.Unchanged) unchanged++;
                         if ((completed % 20 == 0 && progress.Elapsed >= TimeSpan.FromSeconds(1)) || progress.Elapsed >= TimeSpan.FromSeconds(10))
                         {
-                            task = task with { Completed = completed, Skipped = skipped, Reused = reused, Results = results.OrderBy(r => r.Key, StringComparer.Ordinal).ToArray(), Updated = Now };
+                            task = task with { Completed = completed, Skipped = skipped, Reused = reused, Unchanged = unchanged, Results = results.OrderBy(r => r.Key, StringComparer.Ordinal).ToArray(), Updated = Now };
                             Store.Put("task", task.Id, task);
-                            Console.Error.WriteLine($"[task {task.Id}] export region={snapshot.Region} locale={snapshot.Locale} progress={completed}/{keys.Length} succeeded={succeeded} skipped={skipped} reused={reused} failed={results.Count - succeeded}");
+                            Console.Error.WriteLine($"[task {task.Id}] export region={snapshot.Region} locale={snapshot.Locale} progress={completed}/{keys.Length} succeeded={succeeded} skipped={skipped} unchanged={unchanged} reused={reused} failed={results.Count - succeeded}");
                             progress.Restart();
                         }
                     }
                 });
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-            return task with { Completed = completed, Skipped = skipped, Reused = reused, Results = results.OrderBy(r => r.Key, StringComparer.Ordinal).ToArray(), State = token.IsCancellationRequested ? "cancelled" : succeeded + skipped == keys.Length ? "succeeded" : succeeded > 0 ? "partial" : "failed" };
+            Console.Error.WriteLine($"[task {task.Id}] export region={snapshot.Region} locale={snapshot.Locale} done keys={keys.Length} unchanged={unchanged} skipped={skipped} published={succeeded - unchanged} reused={reused} failed={results.Count - succeeded}");
+            return task with { Completed = completed, Skipped = skipped, Reused = reused, Unchanged = unchanged, Results = results.OrderBy(r => r.Key, StringComparer.Ordinal).ToArray(), State = token.IsCancellationRequested ? "cancelled" : succeeded + skipped == keys.Length ? "succeeded" : succeeded > 0 ? "partial" : "failed" };
         });
     }
     private async Task<Download> DownloadOne(Snapshot snapshot, Location location, CancellationToken token)
@@ -376,13 +383,7 @@ public sealed partial class AssetService : IAsyncDisposable
         try
         {
             var existing = Store.Get<Manifest>("export", id); if (existing != null) return existing;
-            var target = catalog.Target(key); var profile = Worker.ProfileFor(target); var locations = ExportSelection.Dependencies(catalog, key);
-            if (target.Provider == Catalog.Cri || target.ResourceType.StartsWith("CriWare.", StringComparison.Ordinal))
-            {
-                var raw = locations.Where(l => l.Provider == Catalog.Cri).ToArray();
-                Require(raw.Length <= 1, "Ambiguous CRI dependencies");
-                if (raw.Length == 1) locations = raw; // Otherwise the CRI bytes are embedded in the Unity asset.
-            }
+            var (target, profile, locations) = ExportInputs(catalog, key);
             Require(locations.Sum(l => l.Options!.Size) <= Config.ExpandedBytes, "Dependency set budget");
             async Task<Manifest> Reuse(Manifest previous, Source[] sources)
             {
@@ -482,29 +483,81 @@ public sealed partial class AssetService : IAsyncDisposable
     /// </summary>
     private (Manifest Previous, Source[] Sources)? FindUnchangedExport(Snapshot snapshot, string key, Location target, string profile, Location[] locations)
     {
-        if (locations.Length == 0 || locations.Any(l => l.Options == null || BundleIdentity.Candidate(l) == null)) return null;
-        var wanted = new Dictionary<string, Location>(StringComparer.Ordinal);
-        foreach (var location in locations) if (!wanted.TryAdd(BundleIdentity.Id(location), location)) return null;
-        var cri = locations.Length == 1 && locations[0].Provider == Catalog.Cri;
-        var criKey = Config.ForSnapshot(snapshot).CriKey.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (Wanted(locations) is not { } wanted) return null;
         foreach (var candidate in Store.ExportsForKey(key))
         {
-            if (candidate.Snapshot == snapshot.Id || candidate.Profile != profile || candidate.Sources.Length != wanted.Count) continue;
-            var sources = new Source[candidate.Sources.Length]; var matched = true;
-            for (var i = 0; i < sources.Length && matched; i++)
-            {
-                var source = candidate.Sources[i];
-                if (source.PlainSha256 == null || source.Location.Options == null || !wanted.TryGetValue(BundleIdentity.Id(source.Location), out var current)) matched = false;
-                else sources[i] = source with { Location = current };
-            }
-            if (!matched) continue;
-            var conversionId = Crypto.Identity(profile, cri ? "cri" : target.Internal, cri ? "cri" : target.ResourceType, criKey, classDataIdentity,
-                string.Join(',', sources.Select(s => s.PlainSha256!).Order(StringComparer.Ordinal)));
-            var previousId = Store.Get<string>("conversion", conversionId);
+            if (candidate.Snapshot == snapshot.Id || MatchSources(candidate, profile, wanted) is not { } sources) continue;
+            var previousId = Store.Get<string>("conversion", ConversionId(snapshot, target, profile, locations, sources));
             var previous = previousId == null ? null : Store.Get<Manifest>("export", previousId);
             if (previous != null && BlobsPresent(previous)) return (previous, sources);
         }
         return null;
+    }
+    /// <summary>The export target, worker profile and downloaded dependency set of a key.</summary>
+    private static (Location Target, string Profile, Location[] Locations) ExportInputs(Catalog catalog, string key)
+    {
+        var target = catalog.Target(key); var locations = ExportSelection.Dependencies(catalog, key);
+        if (target.Provider == Catalog.Cri || target.ResourceType.StartsWith("CriWare.", StringComparison.Ordinal))
+        {
+            var raw = locations.Where(l => l.Provider == Catalog.Cri).ToArray();
+            Require(raw.Length <= 1, "Ambiguous CRI dependencies");
+            if (raw.Length == 1) locations = raw; // Otherwise the CRI bytes are embedded in the Unity asset.
+        }
+        return (target, Worker.ProfileFor(target), locations);
+    }
+    /// <summary>Dependencies by bundle identity, or null when one lacks the catalog hash/CRC that makes the identity content-bound.</summary>
+    private static Dictionary<string, Location>? Wanted(Location[] locations)
+    {
+        if (locations.Length == 0 || locations.Any(l => l.Options == null || BundleIdentity.Candidate(l) == null)) return null;
+        var wanted = new Dictionary<string, Location>(StringComparer.Ordinal);
+        foreach (var location in locations) if (!wanted.TryAdd(BundleIdentity.Id(location), location)) return null;
+        return wanted;
+    }
+    /// <summary>The manifest's sources relocated onto <paramref name="wanted"/>, when both name exactly the same bundles.</summary>
+    private static Source[]? MatchSources(Manifest manifest, string profile, Dictionary<string, Location> wanted)
+    {
+        if (manifest.Profile != profile || manifest.Sources.Length != wanted.Count) return null;
+        var sources = new Source[manifest.Sources.Length];
+        for (var i = 0; i < sources.Length; i++)
+        {
+            var source = manifest.Sources[i];
+            if (source.PlainSha256 == null || source.Location.Options == null || !wanted.TryGetValue(BundleIdentity.Id(source.Location), out var current)) return null;
+            sources[i] = source with { Location = current };
+        }
+        return sources;
+    }
+    private string ConversionId(Snapshot snapshot, Location target, string profile, Location[] locations, IEnumerable<Source> sources)
+    {
+        var cri = locations.Length == 1 && locations[0].Provider == Catalog.Cri;
+        return Crypto.Identity(profile, cri ? "cri" : target.Internal, cri ? "cri" : target.ResourceType,
+            Config.ForSnapshot(snapshot).CriKey.ToString(System.Globalization.CultureInfo.InvariantCulture), classDataIdentity,
+            string.Join(',', sources.Select(s => s.PlainSha256!).Order(StringComparer.Ordinal)));
+    }
+    /// <summary>
+    /// Older snapshots of the scope that path routes fall back to after <paramref name="snapshot"/>, newest first.
+    /// Empty unless the snapshot is its scope's current one: only then is "what an earlier snapshot serves" what the routes serve.
+    /// </summary>
+    private string[] FallbackSnapshots(Snapshot snapshot)
+    {
+        if (Store.CurrentSnapshot(snapshot.Region, snapshot.Locale, snapshot.BiliVersion) != snapshot.Id) return [];
+        return Store.ScopeSnapshots(snapshot.Region, snapshot.Locale, snapshot.BiliVersion).Where(s => s != snapshot.Id).ToArray();
+    }
+    /// <summary>
+    /// The export that path routes already serve for <paramref name="key"/> from an earlier snapshot of the scope,
+    /// when its dependencies are byte-identical to this catalog's and it was converted under the current config.
+    /// Such a key needs no new manifest: the routes fall back to it and the version diff sees an unchanged export ID.
+    /// </summary>
+    private Manifest? ServedUnchanged(Snapshot snapshot, Catalog catalog, string key, string[] fallbacks)
+    {
+        if (fallbacks.Length == 0) return null;
+        var (target, profile, locations) = ExportInputs(catalog, key);
+        if (Wanted(locations) is not { } wanted) return null;
+        // The first match is what ResolvePath returns; an older identical export behind a changed one is not served.
+        var served = Store.FirstExport(fallbacks.SelectMany(s => new[] { Crypto.Identity(s, key, Worker.Profile), Crypto.Identity(s, key, Worker.MovieProfile) }).ToArray());
+        if (served == null || MatchSources(served, profile, wanted) is not { } sources) return null;
+        // A CRI key or class data change maps the same inputs to another conversion, so the key converts again.
+        var canonical = Store.Get<string>("conversion", ConversionId(snapshot, target, profile, locations, sources));
+        return canonical != null && (canonical == served.Id || canonical == served.ReusedFrom) ? served : null;
     }
     public TaskInfo StartVerify(VerifyRequest request)
     {
