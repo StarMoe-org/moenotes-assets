@@ -61,7 +61,8 @@ public class BatchQueueTests
             var done = await Finish(service, first.Id); Assert.Equal("succeeded", done.State); Assert.Equal(6, done.Steps.Length);
             Assert.All(done.Steps, s => Assert.Equal("succeeded", s.State));
             Assert.Equal("succeeded", (await Finish(service, second.Id)).State);
-            Assert.Equal(new[] { "catalog_main_en.hash", "catalog_main_en.bin", "fixture.bundle", "catalog_main_ja.hash", "catalog_main_ja.bin", "fixture.bundle", "catalog_main_ko.hash", "catalog_main_ko.bin", "fixture.bundle", "catalog_main_en.hash", "catalog_main_en.bin" }, requests.ToArray());
+            // ja and ko declare byte-identical bundles, so their exports reuse en without downloading.
+            Assert.Equal(new[] { "catalog_main_en.hash", "catalog_main_en.bin", "fixture.bundle", "catalog_main_ja.hash", "catalog_main_ja.bin", "catalog_main_ko.hash", "catalog_main_ko.bin", "catalog_main_en.hash", "catalog_main_en.bin" }, requests.ToArray());
             Assert.Equal(HttpStatusCode.OK, (await http.GetAsync("/tasks/batches")).StatusCode);
             Assert.Equal(HttpStatusCode.OK, (await http.GetAsync($"/tasks/batches/{first.Id}")).StatusCode);
             Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync("/tasks/batches/missing")).StatusCode);

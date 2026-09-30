@@ -23,6 +23,8 @@ public sealed partial class Store : IDisposable
         readerConnectionString = new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString();
         connection.Open();
         Execute("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS records(kind TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(kind,id));");
+        // Lets a new catalog version find earlier exports of the same key without scanning every manifest.
+        Execute("CREATE INDEX IF NOT EXISTS ix_records_export_key ON records(json_extract(body,'$.key')) WHERE kind='export';");
         InitializeIndex();
     }
     public void Execute(string sql, params (string Name, object Value)[] parameters)
@@ -85,6 +87,16 @@ public sealed partial class Store : IDisposable
         while (reader.Read()) found[reader.GetString(0)] = reader.GetFieldValue<byte[]>(1);
         var first = ids.FirstOrDefault(found.ContainsKey);
         return first == null ? null : Json.Read<Manifest>(found[first]);
+    });
+    /// <summary>The newest published exports of <paramref name="key"/> across all snapshots.</summary>
+    public Manifest[] ExportsForKey(string key, int limit = 32) => Read(c =>
+    {
+        using var command = c.CreateCommand();
+        command.CommandText = "SELECT body FROM records WHERE kind='export' AND json_extract(body,'$.key')=$key ORDER BY rowid DESC LIMIT $limit";
+        command.Parameters.AddWithValue("$key", key); command.Parameters.AddWithValue("$limit", limit);
+        using var reader = command.ExecuteReader(); var page = new List<Manifest>();
+        while (reader.Read()) page.Add(Json.Read<Manifest>(reader.GetFieldValue<byte[]>(0)));
+        return page.ToArray();
     });
     /// <summary>Published exports by ID (unknown IDs are absent), read in chunks on pooled readers.</summary>
     public Dictionary<string, Manifest> Exports(IEnumerable<string> ids)

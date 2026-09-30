@@ -384,6 +384,24 @@ public sealed partial class AssetService : IAsyncDisposable
                 if (raw.Length == 1) locations = raw; // Otherwise the CRI bytes are embedded in the Unity asset.
             }
             Require(locations.Sum(l => l.Options!.Size) <= Config.ExpandedBytes, "Dependency set budget");
+            async Task<Manifest> Reuse(Manifest previous, Source[] sources)
+            {
+                Require(previous.Files.Sum(f => f.Bytes) <= Config.OutputBytes, "Reused output size budget");
+                var copied = previous.Files.Select(f => f with { Id = Crypto.Identity(id, f.Name), Label = f.MediaType == "video/mp4" ? target.Key : f.Label }).ToArray();
+                var reused = new Manifest(id, snapshot.Id, key, profile, sources, copied, snapshot.Region, previous.Id);
+                stage = Path.Combine(Config.DataDir, "tmp", "reuse-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(stage);
+                await File.WriteAllTextAsync(Path.Combine(stage, "manifest.json"), Json.Write(reused), token);
+                token.ThrowIfCancellationRequested();
+                lock (storageGate) { Directory.Move(stage, destination); moved = true; Store.Publish(reused, true); moved = false; }
+                MaterializePaths(reused); return reused;
+            }
+            // A new catalog version usually keeps most bundles byte-identical. When every
+            // dependency has the same catalog identity as an earlier export, reuse it without downloading.
+            if (FindUnchangedExport(snapshot, key, target, profile, locations) is { } unchanged)
+            {
+                foreach (var source in unchanged.Sources) Store.Observe(snapshot.Id, source.Location, source.DownloadSha256, source.PlainSha256!);
+                return await Reuse(unchanged.Previous, unchanged.Sources);
+            }
             // Admit the complete dependency set and workspace atomically. Waiting
             // while holding partial downloads could otherwise deadlock the budget.
             reservation = await Budget.ReserveAsync(locations.Sum(l => l.Options!.Size) + Config.OutputBytes + Config.ExpandedBytes * 2, token);
@@ -403,17 +421,8 @@ public sealed partial class AssetService : IAsyncDisposable
             await conversionGate.WaitAsync(token); conversionHeld = true;
             var previousId = Store.Get<string>("conversion", conversionId);
             var previous = previousId == null ? null : Store.Get<Manifest>("export", previousId);
-            if (previous != null && previous.Files.All(f => File.Exists(Blobs.PathFor(f.Sha256)) && new FileInfo(Blobs.PathFor(f.Sha256)).Length == f.Bytes))
-            {
-                Require(previous.Files.Sum(f => f.Bytes) <= Config.OutputBytes, "Reused output size budget");
-                var copied = previous.Files.Select(f => f with { Id = Crypto.Identity(id, f.Name), Label = f.MediaType == "video/mp4" ? target.Key : f.Label }).ToArray();
-                var reused = new Manifest(id, snapshot.Id, key, profile, leases.Select(l => new Source(l.Value.Input.Location, l.Value.Hash, l.Value.PlainHash)).ToArray(), copied, snapshot.Region, previous.Id);
-                stage = Path.Combine(Config.DataDir, "tmp", "reuse-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(stage);
-                await File.WriteAllTextAsync(Path.Combine(stage, "manifest.json"), Json.Write(reused), token);
-                token.ThrowIfCancellationRequested();
-                lock (storageGate) { Directory.Move(stage, destination); moved = true; Store.Publish(reused, true); moved = false; }
-                MaterializePaths(reused); return reused;
-            }
+            if (previous != null && BlobsPresent(previous))
+                return await Reuse(previous, leases.Select(l => new Source(l.Value.Input.Location, l.Value.Hash, l.Value.PlainHash)).ToArray());
             stage = Path.Combine(Config.DataDir, "tmp", "job-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(stage);
             var output = Path.Combine(stage, "out");
             await workers.WaitAsync(token);
@@ -463,6 +472,39 @@ public sealed partial class AssetService : IAsyncDisposable
                 finally { reservation?.Dispose(); if (conversionHeld) conversionGate!.Release(); publication.Release(); }
             }
         }
+    }
+    private bool BlobsPresent(Manifest manifest) =>
+        manifest.Files.All(f => File.Exists(Blobs.PathFor(f.Sha256)) && new FileInfo(Blobs.PathFor(f.Sha256)).Length == f.Bytes);
+    /// <summary>
+    /// Finds an earlier export of the same key whose dependencies have identical catalog identities
+    /// (internal path, provider, hash, CRC, size), so their bytes and plain hashes are known without a download.
+    /// The conversion identity is recomputed for this snapshot's config, so a CRI key or class data change still converts.
+    /// </summary>
+    private (Manifest Previous, Source[] Sources)? FindUnchangedExport(Snapshot snapshot, string key, Location target, string profile, Location[] locations)
+    {
+        if (locations.Length == 0 || locations.Any(l => l.Options == null || BundleIdentity.Candidate(l) == null)) return null;
+        var wanted = new Dictionary<string, Location>(StringComparer.Ordinal);
+        foreach (var location in locations) if (!wanted.TryAdd(BundleIdentity.Id(location), location)) return null;
+        var cri = locations.Length == 1 && locations[0].Provider == Catalog.Cri;
+        var criKey = Config.ForSnapshot(snapshot).CriKey.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        foreach (var candidate in Store.ExportsForKey(key))
+        {
+            if (candidate.Snapshot == snapshot.Id || candidate.Profile != profile || candidate.Sources.Length != wanted.Count) continue;
+            var sources = new Source[candidate.Sources.Length]; var matched = true;
+            for (var i = 0; i < sources.Length && matched; i++)
+            {
+                var source = candidate.Sources[i];
+                if (source.PlainSha256 == null || source.Location.Options == null || !wanted.TryGetValue(BundleIdentity.Id(source.Location), out var current)) matched = false;
+                else sources[i] = source with { Location = current };
+            }
+            if (!matched) continue;
+            var conversionId = Crypto.Identity(profile, cri ? "cri" : target.Internal, cri ? "cri" : target.ResourceType, criKey, classDataIdentity,
+                string.Join(',', sources.Select(s => s.PlainSha256!).Order(StringComparer.Ordinal)));
+            var previousId = Store.Get<string>("conversion", conversionId);
+            var previous = previousId == null ? null : Store.Get<Manifest>("export", previousId);
+            if (previous != null && BlobsPresent(previous)) return (previous, sources);
+        }
+        return null;
     }
     public TaskInfo StartVerify(VerifyRequest request)
     {
