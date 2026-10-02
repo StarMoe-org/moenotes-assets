@@ -22,7 +22,8 @@ public sealed partial class Store : IDisposable
         connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
         readerConnectionString = new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString();
         connection.Open();
-        Execute("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS records(kind TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(kind,id));");
+        // Without a limit the WAL keeps its high-water size after every checkpoint (1.9 GB after a release).
+        Execute("PRAGMA journal_mode=WAL; PRAGMA journal_size_limit=67108864; CREATE TABLE IF NOT EXISTS records(kind TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(kind,id));");
         // Lets a new catalog version find earlier exports of the same key without scanning every manifest.
         Execute("CREATE INDEX IF NOT EXISTS ix_records_export_key ON records(json_extract(body,'$.key')) WHERE kind='export';");
         InitializeIndex();
@@ -155,7 +156,8 @@ public sealed partial class Store : IDisposable
         {
             using var transaction = connection.BeginTransaction();
             Put("export", manifest.Id, manifest);
-            foreach (var file in manifest.Files) Put("file", file.Id, new FileRecord(manifest.Id, file, contentAddressed ? file.Sha256 : null));
+            // File records only route /files/{id} to bytes; metadata stays in the manifest instead of being stored twice.
+            foreach (var file in manifest.Files) Put("file", file.Id, new FileRecord(manifest.Id, file with { Metadata = null }, contentAddressed ? file.Sha256 : null));
             transaction.Commit();
         }
         exportVersions.AddOrUpdate(manifest.Key, 1, (_, version) => version + 1);

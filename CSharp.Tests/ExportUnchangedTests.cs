@@ -55,6 +55,8 @@ public class ExportUnchangedTests
         var republished = Assert.Single(thirdExport.Results).ExportId!;
         Assert.NotEqual(served, republished);
         Assert.Equal(republished, service.ResolvePath(null, "en", Fixture.Key)!.Manifest.Id);
+        // Manifests live only in SQLite; content-addressed exports leave nothing under exports/.
+        Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(dir.Path, "exports")));
         await cdn.StopAsync();
     }
 }

@@ -203,8 +203,8 @@ these files are ignored by Git. No account or player token is needed for the
 current catalog test. Relative `data_dir` is resolved against the config file.
 
 Persist the **whole `/data` directory** in Docker: `csharp.sqlite` (including live
-WAL/SHM), `catalogs/`, `blobs/`, `exports/` and `public/` (hard links to blobs; keep it
-on the same filesystem). `tmp/` is transient and cleaned;
+WAL/SHM), `catalogs/`, `blobs/`, `exports/` (legacy, non-content-addressed outputs only) and `public/`
+(hard links to blobs; keep it on the same filesystem). `tmp/` is transient and cleaned;
 keep staging on the same filesystem for atomic publication. Use the generated
 `config.docker.toml` as the read-only configuration mount in the example above.
 Region/language/version separation lives in SQLite and manifests, while identical
@@ -217,7 +217,13 @@ them and are removed on the last release. Extraction staging is removed after
 success, failure or cancellation; startup cleans crash leftovers and unreferenced
 blobs. Referenced output files, manifests and catalog history are retained without
 automatic eviction. Changed versions therefore still grow storage over time.
-Content-addressed outputs deduplicate disk bytes. Verified plaintext dependencies
+Content-addressed outputs deduplicate disk bytes. Manifests live only in SQLite; file records keep only what
+`/files/{id}` needs (metadata stays in the manifest). Startup removes the `exports/{id}/manifest.json` copies and
+file-record metadata of older versions in the background, and deletes finished tasks older than seven days except
+the export tasks the next release diff compares against. Export progress checkpoints store counters and failures;
+the full per-key results are written once at the end. The WAL is truncated to 64 MiB after checkpoints.
+`POST /storage/compact` (administrative) then runs `VACUUM` to return the freed pages to the filesystem; writers wait
+for its whole run, so use it outside a release. It needs free space for a temporary copy of the database. Verified plaintext dependencies
 and matching conversion inputs also reuse decoding across snapshots. First
 downloads are still required. Metadata candidate
 hashes alone never authorize reusing unverified remote content.

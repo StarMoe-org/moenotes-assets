@@ -196,6 +196,7 @@ public static class Api
         app.MapPost("/bundles/verify", (VerifyRequest request) => Accepted(service.StartVerify(request)));
         app.MapGet("/diffs", (string from, string to, string? prefix, int? offset, int? limit, bool? include_unchanged) => service.Store.Diff(from, to, prefix, offset ?? 0, limit ?? 100, include_unchanged ?? false));
         app.MapGet("/storage", () => service.Store.StorageStats(service.Budget.Used));
+        app.MapPost("/storage/compact", () => Accepted(service.StartCompact()));
 
         return app;
     }

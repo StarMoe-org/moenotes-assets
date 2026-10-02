@@ -80,14 +80,55 @@ public class CatalogIndexTests
             var bytes = System.Text.Encoding.UTF8.GetBytes(text); var sha = Crypto.Sha256(bytes);
             var source = Path.Combine(dir.Path, sha + ".tmp"); File.WriteAllBytes(source, bytes); service.Blobs.Publish(source, sha, bytes.Length); return sha;
         }
-        string ExportDirectory(string id) { var path = Path.Combine(dir.Path, "exports", id); Directory.CreateDirectory(path); File.WriteAllText(Path.Combine(path, "manifest.json"), "{}"); return path; }
+        // Legacy export directories hold their files beside an unread manifest.json copy.
+        string ExportDirectory(string id, bool files = true)
+        {
+            var path = Path.Combine(dir.Path, "exports", id); Directory.CreateDirectory(path); File.WriteAllText(Path.Combine(path, "manifest.json"), "{}");
+            if (files) File.WriteAllText(Path.Combine(path, "00000.txt"), "legacy"); return path;
+        }
         var kept = Blob("committed"); var orphan = Blob("interrupted");
-        var published = ExportDirectory("published"); var unpublished = ExportDirectory("unpublished");
+        var published = ExportDirectory("published"); var unpublished = ExportDirectory("unpublished"); var copyOnly = ExportDirectory("copy-only", files: false);
         service.Store.Publish(new("published", "snapshot", "key", Worker.Profile, [], [new("file", "00000.txt", "label", "text/plain", 9, kept, null)]), true);
         // Recovery runs after construction, beside the listener, instead of blocking startup.
         Assert.True(File.Exists(service.Blobs.PathFor(orphan)));
         await service.SweepStorage();
         Assert.True(File.Exists(service.Blobs.PathFor(kept))); Assert.False(File.Exists(service.Blobs.PathFor(orphan)));
-        Assert.True(Directory.Exists(published)); Assert.False(Directory.Exists(unpublished));
+        Assert.True(File.Exists(Path.Combine(published, "00000.txt"))); Assert.False(File.Exists(Path.Combine(published, "manifest.json")));
+        Assert.False(Directory.Exists(unpublished)); Assert.False(Directory.Exists(copyOnly));
+    }
+    [Fact]
+    public void PublishedFileRecordsOmitManifestMetadata()
+    {
+        using var dir = new TempDirectory(); using var store = new Store(dir.Path); var sha = new string('a', 64);
+        var metadata = new Dictionary<string, object> { ["width"] = 4 };
+        store.Publish(new("new", "snapshot", "key", Worker.Profile, [], [new("new-file", "00000.png", "label", "image/png", 9, sha, metadata)]), true);
+        Assert.Null(store.Get<FileRecord>("file", "new-file")!.File.Metadata);
+        Assert.NotNull(store.Get<Manifest>("export", "new")!.Files[0].Metadata);
+        // Records written before the change are slimmed once, in batches smaller than the table.
+        for (var i = 0; i < 3; i++) store.Put("file", "old-" + i, new FileRecord("old", new("old-" + i, "00000.png", "label", "image/png", 9, sha, metadata), sha));
+        Assert.Equal(3, store.SlimFileRecords(CancellationToken.None, batch: 2));
+        var old = store.Get<FileRecord>("file", "old-1")!; Assert.Null(old.File.Metadata); Assert.Equal(sha, old.BlobSha256); Assert.Equal("image/png", old.File.MediaType);
+        store.Put("file", "later", new FileRecord("old", new("later", "00000.png", "label", "image/png", 9, sha, metadata), sha));
+        Assert.Equal(0, store.SlimFileRecords(CancellationToken.None));
+    }
+    [Fact]
+    public void PruneTasksKeepsUnfinishedRecentAndRetained()
+    {
+        using var dir = new TempDirectory(); using var store = new Store(dir.Path);
+        void Task(string id, string state, long updated) => store.Put("task", id, new TaskInfo(id, "export", state, null, 1, 1, [], null, 1, updated));
+        Task("old", "succeeded", 10); Task("retained", "succeeded", 10); Task("running", "running", 10); Task("recent", "failed", 100);
+        Assert.Equal(1, store.PruneTasks(50, ["retained"]));
+        Assert.Equal(["recent", "retained", "running"], store.All<TaskInfo>("task").Select(t => t.Id).Order().ToArray());
+    }
+    [Fact]
+    public void CompactReclaimsDeletedPages()
+    {
+        using var dir = new TempDirectory(); using var store = new Store(dir.Path);
+        for (var i = 0; i < 200; i++) store.Put("task", "t" + i, new string('x', 20000));
+        Assert.NotNull(store.Find<string>("task", "t0")); // leaves an idle pooled reader open, as a serving process has
+        store.Execute("DELETE FROM records WHERE kind='task'");
+        var (before, after) = store.Compact();
+        Assert.True(after < before / 4, $"{before} -> {after}");
+        Assert.Null(store.Find<string>("task", "t0"));
     }
 }

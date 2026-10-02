@@ -21,7 +21,7 @@ public sealed partial class AssetService : IAsyncDisposable
     private readonly CancellationTokenSource shutdown = new();
     private readonly Dictionary<string, WeakReference<SemaphoreSlim>> publicationGates = new();
     private readonly string classDataIdentity;
-    // Held from a publication's first move into blobs/ or exports/ until its SQLite commit; see SweepStorage.
+    // Held from a publication's first move into blobs/ until its SQLite commit; see SweepStorage.
     private readonly object storageGate = new();
     private Task storageSweep = Task.CompletedTask;
     private sealed record Download(WorkerInput Input, string Hash, string PlainHash, string Directory);
@@ -85,6 +85,8 @@ public sealed partial class AssetService : IAsyncDisposable
         var clock = System.Diagnostics.Stopwatch.StartNew();
         try
         {
+            MaintainStorage();
+            clock.Restart();
             var blobs = Sweep(Store.ReferencedBlobs, Blobs.Files(), File.Delete);
             var exports = Sweep(() => Store.Ids("export"), Directory.EnumerateDirectories(Path.Combine(Config.DataDir, "exports")), RemoveTree);
             Console.Error.WriteLine($"[startup] storage sweep removed {blobs} orphan blobs and {exports} unpublished exports in {clock.Elapsed.TotalSeconds:F1}s");
@@ -310,7 +312,9 @@ public sealed partial class AssetService : IAsyncDisposable
                         if (item.Unchanged) unchanged++;
                         if ((completed % 20 == 0 && progress.Elapsed >= TimeSpan.FromSeconds(1)) || progress.Elapsed >= TimeSpan.FromSeconds(10))
                         {
-                            task = task with { Completed = completed, Skipped = skipped, Reused = reused, Unchanged = unchanged, Results = results.OrderBy(r => r.Key, StringComparer.Ordinal).ToArray(), Updated = Now };
+                            // Checkpoints carry counters and failures only; the full per-key results (megabytes for a whole
+                            // catalog) are written once when the task ends, where release diffs read them.
+                            task = task with { Completed = completed, Skipped = skipped, Reused = reused, Unchanged = unchanged, Results = results.Where(r => r.Error != null).Take(100).ToArray(), Updated = Now };
                             Store.Put("task", task.Id, task);
                             Console.Error.WriteLine($"[task {task.Id}] export region={snapshot.Region} locale={snapshot.Locale} progress={completed}/{keys.Length} succeeded={succeeded} skipped={skipped} unchanged={unchanged} reused={reused} failed={results.Count - succeeded}");
                             progress.Restart();
@@ -377,23 +381,21 @@ public sealed partial class AssetService : IAsyncDisposable
         }
         await publication.WaitAsync(token);
         SemaphoreSlim? conversionGate = null; var conversionHeld = false;
-        var leases = new List<SharedWork<Download>.Lease>(); string? stage = null; var moved = false;
+        var leases = new List<SharedWork<Download>.Lease>(); string? stage = null;
         IDisposable? reservation = null;
-        var destination = Path.Combine(Config.DataDir, "exports", id);
         try
         {
             var existing = Store.Get<Manifest>("export", id); if (existing != null) return existing;
             var (target, profile, locations) = ExportInputs(catalog, key);
             Require(locations.Sum(l => l.Options!.Size) <= Config.ExpandedBytes, "Dependency set budget");
-            async Task<Manifest> Reuse(Manifest previous, Source[] sources)
+            // Manifests live only in SQLite: the exports/{id}/manifest.json copies were never read.
+            Manifest Reuse(Manifest previous, Source[] sources)
             {
                 Require(previous.Files.Sum(f => f.Bytes) <= Config.OutputBytes, "Reused output size budget");
                 var copied = previous.Files.Select(f => f with { Id = Crypto.Identity(id, f.Name), Label = f.MediaType == "video/mp4" ? target.Key : f.Label }).ToArray();
                 var reused = new Manifest(id, snapshot.Id, key, profile, sources, copied, snapshot.Region, previous.Id);
-                stage = Path.Combine(Config.DataDir, "tmp", "reuse-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(stage);
-                await File.WriteAllTextAsync(Path.Combine(stage, "manifest.json"), Json.Write(reused), token);
                 token.ThrowIfCancellationRequested();
-                lock (storageGate) { Directory.Move(stage, destination); moved = true; Store.Publish(reused, true); moved = false; }
+                lock (storageGate) Store.Publish(reused, true);
                 MaterializePaths(reused); return reused;
             }
             // A new catalog version usually keeps most bundles byte-identical. When every
@@ -401,7 +403,7 @@ public sealed partial class AssetService : IAsyncDisposable
             if (FindUnchangedExport(snapshot, key, target, profile, locations) is { } unchanged)
             {
                 foreach (var source in unchanged.Sources) Store.Observe(snapshot.Id, source.Location, source.DownloadSha256, source.PlainSha256!);
-                return await Reuse(unchanged.Previous, unchanged.Sources);
+                return Reuse(unchanged.Previous, unchanged.Sources);
             }
             // Admit the complete dependency set and workspace atomically. Waiting
             // while holding partial downloads could otherwise deadlock the budget.
@@ -423,7 +425,7 @@ public sealed partial class AssetService : IAsyncDisposable
             var previousId = Store.Get<string>("conversion", conversionId);
             var previous = previousId == null ? null : Store.Get<Manifest>("export", previousId);
             if (previous != null && BlobsPresent(previous))
-                return await Reuse(previous, leases.Select(l => new Source(l.Value.Input.Location, l.Value.Hash, l.Value.PlainHash)).ToArray());
+                return Reuse(previous, leases.Select(l => new Source(l.Value.Input.Location, l.Value.Hash, l.Value.PlainHash)).ToArray());
             stage = Path.Combine(Config.DataDir, "tmp", "job-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(stage);
             var output = Path.Combine(stage, "out");
             await workers.WaitAsync(token);
@@ -454,19 +456,18 @@ public sealed partial class AssetService : IAsyncDisposable
             }
             var published = files.Select(f => new PublishedFile(Crypto.Identity(id, f.Name), f.Name, f.Label, f.MediaType, f.Bytes, f.Sha256, f.Metadata)).ToArray();
             var manifest = new Manifest(id, snapshot.Id, key, profile, leases.Select(l => new Source(l.Value.Input.Location, l.Value.Hash, l.Value.PlainHash)).ToArray(), published, snapshot.Region);
-            await File.WriteAllTextAsync(Path.Combine(output, "manifest.json"), Json.Write(manifest), token);
             token.ThrowIfCancellationRequested();
             lock (storageGate)
             {
                 foreach (var file in files) Blobs.Publish(Path.Combine(output, file.Name), file.Sha256, file.Bytes);
-                Directory.Move(output, destination); moved = true; Store.Publish(manifest, true); moved = false;
+                Store.Publish(manifest, true);
             }
             MaterializePaths(manifest);
             Store.Put("conversion", conversionId, manifest.Id); return manifest;
         }
         finally
         {
-            try { if (moved) RemoveTree(destination); if (stage != null) RemoveTree(stage); }
+            try { if (stage != null) RemoveTree(stage); }
             finally
             {
                 try { foreach (var lease in leases) await lease.DisposeAsync(); }

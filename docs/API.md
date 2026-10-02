@@ -44,6 +44,7 @@ key from a trusted backend/admin client over HTTPS, not public frontend code.
 | GET | /versions/{region}/{resource_version}/release.json | One release: languages, snapshots, counts |
 | GET | /versions/{region}/{resource_version}/diff/{locale}.json | Published-file diff against the previous release |
 | GET | /storage | Index, output deduplication and temporary budget statistics |
+| POST | /storage/compact | 202 task: after startup maintenance, `VACUUM` SQLite and truncate the WAL; writers wait meanwhile |
 | POST | /exports | 202 export task |
 | GET | /tasks/{id} | Persisted task state |
 | POST | /tasks/{id}/cancel | Cancel; terminal tasks remain unchanged |

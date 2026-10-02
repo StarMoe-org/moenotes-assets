@@ -20,6 +20,11 @@ changes require explicit release notes; a frozen stable API is not claimed.
 
 ## 0.2.0-csharp (unreleased)
 
+- Shrink storage: stop writing never-read `exports/{id}/manifest.json` copies and storing file metadata twice in
+  file records; startup removes both from older data in the background and prunes finished tasks after seven days
+  (keeping the export tasks the next release diff needs). Export progress checkpoints no longer rewrite every
+  per-key result each second; the WAL is capped at 64 MiB after checkpoints. `POST /storage/compact` vacuums SQLite.
+
 - Fix international updates continuing to download `catalog_main` after
   `resource_version` changed. Pin the release's version and CDN roots through
   catalog refresh, all-language batches and restart recovery; preserve existing

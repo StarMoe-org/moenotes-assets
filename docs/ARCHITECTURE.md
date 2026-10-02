@@ -83,8 +83,8 @@ Interrupted scans resume by skipping committed bundle IDs. Raw downloads are
 released after scanning; local game dependencies cannot be scanned remotely.
 
 Publication validates worker outputs and moves each into `blobs/<prefix>/<sha256>`.
-Per-export manifests and per-file records preserve scope identities. SQLite commit
-makes the publication visible. Orphan blobs and export directories, left by a
+Per-export manifests and per-file records preserve scope identities; both live only in SQLite (file records
+without the manifest's metadata). SQLite commit makes the publication visible. Orphan blobs and export directories, left by a
 publication interrupted before its commit, are never served, so a background sweep
 removes them after the listener starts; publication holds a lock from its first
 move until its commit, and the sweep rechecks candidates under it. Old C# export
