@@ -17,16 +17,20 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS runtime
 ENV ASPNETCORE_HTTP_PORTS=
 # playfetch keeps its account store and session cache on the data volume.
 ENV XDG_CONFIG_HOME=/data/.config XDG_CACHE_HOME=/data/.cache
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg tini \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg gosu iproute2 openvpn tini \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir /data && chown 65532:65532 /data
 WORKDIR /app
 COPY --from=build /app/ ./
 COPY --from=playfetch /out/playfetch /usr/local/bin/playfetch
+COPY docker/vpngate-jp.conf /etc/openvpn/vpngate-jp.conf
+COPY docker-entrypoint.sh /usr/local/bin/moenotes-entrypoint
 COPY LICENSE THIRD_PARTY_NOTICES.md /usr/share/doc/moenotes-assets/
 COPY third_party/ /usr/share/doc/moenotes-assets/third_party/
-USER 65532:65532
+RUN chmod 0755 /usr/local/bin/moenotes-entrypoint \
+    && chmod 0644 /etc/openvpn/vpngate-jp.conf
+USER root
 WORKDIR /data
 EXPOSE 8091
-ENTRYPOINT ["/usr/bin/tini", "-g", "--", "dotnet", "/app/MoenotesAssets.dll"]
+ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/usr/local/bin/moenotes-entrypoint"]
 CMD ["serve", "/etc/moenotes-assets/config.toml"]

@@ -159,8 +159,33 @@ Export `MOENOTES_API_KEY` in the host shell before running Docker. On Zeabur, ad
 `MOENOTES_API_KEY` as a service environment variable and redeploy. Use a long
 random secret (for example, `openssl rand -hex 32`), not a TOML setting. Changing
 the key requires restarting the service and invalidates the old key.
-The container runs as UID/GID 65532. Bind mounts must be writable by that user.
+The application process runs as UID/GID 65532. The entrypoint stays root only
+to create the optional TUN device and routes; bind mounts must be writable by
+UID/GID 65532.
 `/health` reports liveness; `/ready` checks SQLite and writable temporary storage.
+
+JP can use an in-container VPN Gate tunnel when the runtime grants access to a
+TUN device and `NET_ADMIN`. The entrypoint keeps split routing enabled: only
+`api.bang-dream-on.jp` and `static.bang-dream-on.jp` use the tunnel; the
+application remains UID/GID 65532 and other traffic keeps the normal route.
+Enable it with `VPNGATE_ENABLED=1`, publish `/dev/net/tun`, and add the
+`NET_ADMIN` capability. `VPNGATE_REMOTE` selects the VPN Gate endpoint and can
+be changed without rebuilding the image when a public relay disappears:
+
+```sh
+docker run --rm --cap-add=NET_ADMIN --device /dev/net/tun \
+  -e MOENOTES_API_KEY \
+  -e VPNGATE_ENABLED=1 \
+  -e VPNGATE_REMOTE=219.100.37.177 \
+  -p 127.0.0.1:8091:8091 \
+  -v moenotes-assets-data:/data \
+  -v "$PWD/config.toml:/etc/moenotes-assets/config.toml:ro" \
+  moenotes-assets:local
+```
+
+If the platform cannot grant `NET_ADMIN` and `/dev/net/tun`, leave
+`VPNGATE_ENABLED` unset; the image then runs without VPN and JP refresh errors
+remain visible instead of silently using an unintended route.
 
 ## Development
 
