@@ -55,6 +55,7 @@ public sealed record Config
     public bool AllowInsecureVersionUrl { get; init; }
     public string JpApiOrigin { get; init; } = "https://api.bang-dream-on.jp";
     public string JpCdnOrigin { get; init; } = "https://static.bang-dream-on.jp";
+    public string JpProxy { get; init; } = "";
     public static Config Load(string path)
     {
         var table = Toml.ToModel(File.ReadAllText(path));
@@ -101,6 +102,7 @@ public sealed record Config
             var uri = (this with { CdnRoot = origin }).Root();
             Require(uri.AbsolutePath == "/", "JP endpoints must be origins");
         }
+        if (JpProxy.Length > 0) _ = JpProxyUri();
         Require(VersionPollSecs == 0 || VersionPollSecs is >= 60 and <= 86400, "version_poll_secs must be 0 or 60 to 86400");
         foreach (var name in Regions.Select(r => r.MetadataRegion).Append(MetadataRegion).OfType<string>())
             Require(name.Length <= 64 && name.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-'), "Invalid metadata_region");
@@ -120,6 +122,15 @@ public sealed record Config
         var loopback = AllowLoopbackHttp && uri!.Host is "127.0.0.1" or "[::1]";
         Require(uri!.UserInfo.Length == 0 && uri.Host.Length > 0 && (uri.Scheme == "https" || (uri.Scheme == "http" && (loopback || AllowInsecureVersionUrl))),
             "HTTPS version_url required (allow_insecure_version_url permits plain HTTP for a cluster-internal metadata service)");
+        return uri;
+    }
+    public Uri? JpProxyUri()
+    {
+        if (JpProxy.Length == 0) return null;
+        Require(JpProxy.Length <= 2048 && !JpProxy.Any(char.IsControl) && !JpProxy.Any(char.IsWhiteSpace), "Invalid jp_proxy");
+        Require(Uri.TryCreate(JpProxy, UriKind.Absolute, out var uri), "Invalid jp_proxy");
+        Require(uri!.Scheme is "http" or "https" && uri.Host.Length > 0 && uri.UserInfo.Length == 0 &&
+            uri.AbsolutePath == "/" && uri.Query.Length == 0 && uri.Fragment.Length == 0 && uri.Port > 0, "jp_proxy must be an HTTP(S) proxy origin without credentials or a path");
         return uri;
     }
     /// <summary>The region's entry name in the version_url document, or null when the region is not tracked.</summary>

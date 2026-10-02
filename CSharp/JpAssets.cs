@@ -92,7 +92,7 @@ public sealed partial class AssetService
             request.Content.Headers.ContentType = new("application/grpc");
             request.Headers.Add("te", "trailers"); request.Headers.Add("x-platform", "android");
             request.Headers.Add("x-client-version", source.ClientVersion); request.Headers.Add("x-request-id", Guid.NewGuid().ToString());
-            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+            using var response = await jpHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
             Require(response.StatusCode == HttpStatusCode.OK, $"JP Version HTTP {(int)response.StatusCode}");
             var body = await ReadResponse(response, 65536, token);
             string? Header(string name) => response.Headers.TryGetValues(name, out var values) ? values.SingleOrDefault() :
@@ -129,7 +129,7 @@ public sealed partial class AssetService
             using var request = new HttpRequestMessage(HttpMethod.Get, uri);
             request.Headers.Authorization = AuthenticationHeaderValue.Parse(credential.Authorization);
             request.Headers.UserAgent.ParseAdd(credential.UserAgent);
-            var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+            var response = await jpHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
             if (attempt != 0 || response.StatusCode is not (HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)) return response;
             response.Dispose();
             credential = await GetJpCredential(source, token, credential);

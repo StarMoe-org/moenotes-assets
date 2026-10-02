@@ -13,6 +13,7 @@ public sealed partial class AssetService : IAsyncDisposable
     public BlobStore Blobs { get; }
     private readonly FileStream instance;
     private readonly HttpClient http;
+    private readonly HttpClient jpHttp;
     private readonly SemaphoreSlim downloads, workers, videos, queue, refresh = new(1);
     private readonly SharedWork<Download> downloadWork;
     private readonly SharedWork<Manifest> exportWork = new();
@@ -60,6 +61,14 @@ public sealed partial class AssetService : IAsyncDisposable
             Phase("tmp");
             Console.Error.WriteLine($"[startup] storage recovery {string.Join(' ', phases)}");
             http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false, AutomaticDecompression = DecompressionMethods.None }) { Timeout = Timeout.InfiniteTimeSpan };
+            var jpProxy = Config.JpProxyUri();
+            jpHttp = new HttpClient(new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false,
+                UseProxy = jpProxy != null,
+                Proxy = jpProxy == null ? null : new WebProxy(jpProxy),
+                AutomaticDecompression = DecompressionMethods.None
+            }) { Timeout = Timeout.InfiniteTimeSpan };
             downloads = new(config.Downloads); workers = new(config.Workers); videos = new(config.Videos); queue = new(config.QueueLimit);
             Budget = new(config.TempBytes);
             downloadWork = new(d => RemoveTree(d.Directory));
@@ -595,6 +604,6 @@ public sealed partial class AssetService : IAsyncDisposable
         shutdown.Cancel(); await versionPolling; await batchRunner; await chartRunner; await modelRunner; await storageSweep; await Task.WhenAll(running.Values.ToArray());
         // Shared producers may still be unwinding after their last waiter cancelled.
         await exportWork.Drain(); await downloadWork.Drain();
-        http.Dispose(); pathCache.Dispose(); Store.Dispose(); instance.Dispose(); shutdown.Dispose();
+        http.Dispose(); jpHttp.Dispose(); pathCache.Dispose(); Store.Dispose(); instance.Dispose(); shutdown.Dispose();
     }
 }

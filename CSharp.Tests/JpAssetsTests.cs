@@ -20,6 +20,23 @@ public class JpAssetsTests
     private static string Address(WebApplication app) => app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
 
     [Fact]
+    public void ValidatesJpProxyAsAnHttpOrigin()
+    {
+        var config = new Config { CdnRoot = "https://static.bang-dream-on.jp", JpProxy = "http://host.docker.internal:7890" };
+        config.Validate();
+        Assert.Equal("http://host.docker.internal:7890/", config.JpProxyUri()!.AbsoluteUri);
+        foreach (var proxy in new[]
+        {
+            "socks5://host.docker.internal:7890",
+            "http://user:password@host.docker.internal:7890",
+            "http://host.docker.internal:7890/proxy",
+            "http://host.docker.internal:7890?mode=global",
+            "http://host.docker.internal:7890#proxy"
+        })
+            Assert.Throws<InvalidDataException>(() => (config with { JpProxy = proxy }).Validate());
+    }
+
+    [Fact]
     public void SelectsLiveAndRejectsUnmatchedOrUnsafePaths()
     {
         var raw = $$"""{"version":"fallback","Android":"{{Hash}}","live":[{"minClientVersion":"2.0","version":"new","Android":"{{Hash}}"},{"minClientVersion":"1.0","version":"first","Android":"{{Hash}}"},{"minClientVersion":"1.0.0","version":"second","Android":"{{Hash}}"}]}""";

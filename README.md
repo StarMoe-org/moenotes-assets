@@ -159,33 +159,37 @@ Export `MOENOTES_API_KEY` in the host shell before running Docker. On Zeabur, ad
 `MOENOTES_API_KEY` as a service environment variable and redeploy. Use a long
 random secret (for example, `openssl rand -hex 32`), not a TOML setting. Changing
 the key requires restarting the service and invalidates the old key.
-The application process runs as UID/GID 65532. The entrypoint stays root only
-to create the optional TUN device and routes; bind mounts must be writable by
+The application process runs as UID/GID 65532; bind mounts must be writable by
 UID/GID 65532.
 `/health` reports liveness; `/ready` checks SQLite and writable temporary storage.
 
-JP can use an in-container VPN Gate tunnel when the runtime grants access to a
-TUN device and `NET_ADMIN`. The entrypoint keeps split routing enabled: only
-`api.bang-dream-on.jp` and `static.bang-dream-on.jp` use the tunnel; the
-application remains UID/GID 65532 and other traffic keeps the normal route.
-Enable it with `VPNGATE_ENABLED=1`, publish `/dev/net/tun`, and add the
-`NET_ADMIN` capability. `VPNGATE_REMOTE` selects the VPN Gate endpoint and can
-be changed without rebuilding the image when a public relay disappears:
+If the server's normal egress gets HTTP 403 from the JP service, run Mihomo or
+another HTTP proxy on the host and configure only JP traffic to use it. The
+application keeps ordinary metadata and other-region requests on the direct
+route. The proxy must listen on an address reachable from the container, not
+only on the host's `127.0.0.1`; Mihomo's `mixed-port` works with the HTTP URL
+below. `jp_proxy` accepts only an HTTP(S) proxy origin without credentials or a
+path; a `socks5://` URL is intentionally rejected.
 
 ```sh
-docker run --rm --cap-add=NET_ADMIN --device /dev/net/tun \
+docker run --rm --add-host=host.docker.internal:host-gateway \
   -e MOENOTES_API_KEY \
-  -e VPNGATE_ENABLED=1 \
-  -e VPNGATE_REMOTE=219.100.37.177 \
   -p 127.0.0.1:8091:8091 \
   -v moenotes-assets-data:/data \
   -v "$PWD/config.toml:/etc/moenotes-assets/config.toml:ro" \
   moenotes-assets:local
 ```
 
-If the platform cannot grant `NET_ADMIN` and `/dev/net/tun`, leave
-`VPNGATE_ENABLED` unset; the image then runs without VPN and JP refresh errors
-remain visible instead of silently using an unintended route.
+Then set this in the mounted `config.toml`:
+
+```toml
+jp_proxy = "http://host.docker.internal:7890"
+```
+
+On platforms that do not provide `host-gateway` or do not expose the host
+network to the container, use a reachable host/LAN address or a separately
+reachable proxy service instead. Do not point the setting at `127.0.0.1` from
+inside the container.
 
 ## Development
 
