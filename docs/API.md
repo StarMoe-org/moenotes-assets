@@ -274,6 +274,16 @@ export of every configured language, prefix `""`), whose refreshes try the roots
 record the answering root in the snapshot. Manual refreshes of a tracked region use its latest
 release's roots instead of `cdn_root`. Cancelled releases are not re-queued automatically.
 
+To recover a cancelled release, use authenticated `POST /versions/check?force=true`,
+then wait for the returned release batch to finish. This checks all configured regions;
+already pending releases are not duplicated. Existing exports are reused when their inputs
+are unchanged. Verify the region's `state`, `resource_version`, `catalog_version` and
+per-language failures in `/versions/current_version.json` after completion.
+Do not use a standalone `/tasks/batches` or `/catalog/refresh` request to repair release
+status: those can successfully update resources without a `release` association and do
+not finalize the cancelled release. In that case the current-version document continues
+to report the previous completed release even though newer assets have been exported.
+
 When the entry's `version` (master data) changes while its resource version and roots stay, nothing is
 unpacked again: the latest release's `master_version` (and `client_version`, `verified_at`) is updated, the
 version files are rewritten and, for the default region, the chart site rebuilds its stale charts

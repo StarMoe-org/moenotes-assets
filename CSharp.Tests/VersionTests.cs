@@ -89,6 +89,26 @@ public class VersionTests
             while (restarted.GetBatch(batch.Id).State is "queued" or "running") await Task.Delay(20, timeout.Token);
             Assert.Equal("succeeded", restarted.GetBatch(batch.Id).State);
             Assert.Equal(currentSnapshot, restarted.ResolveSnapshot().Id);
+            // A standalone rerun does not publish a cancelled release. Force checking
+            // must create a linked batch and repair the public version document.
+            restarted.Store.Put("release", corrected.Id, corrected with { State = "cancelled", Locales = [] });
+            Assert.Equal("cancelled", Assert.Single((await restarted.CheckVersions()).Regions).Action);
+            var standalone = restarted.StartBatch(new());
+            while (restarted.GetBatch(standalone.Id).State is "queued" or "running") await Task.Delay(20, timeout.Token);
+            Assert.Equal("succeeded", restarted.GetBatch(standalone.Id).State);
+            Assert.Null(restarted.GetBatch(standalone.Id).Release);
+            Assert.Equal("cancelled", restarted.GetRelease(releaseId)!.State);
+            var retry = Assert.Single((await restarted.CheckVersions(force: true)).Regions);
+            Assert.Equal("queued", retry.Action);
+            Assert.Equal(releaseId, restarted.GetBatch(retry.Batch!).Release);
+            var repaired = await restarted.WaitRelease(releaseId).WaitAsync(TimeSpan.FromSeconds(60));
+            Assert.Equal("succeeded", repaired.State);
+            Assert.All(repaired.Locales, l => Assert.Equal(0, l.Failed));
+            var published = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(restarted.VersionsRoot, "current_version.json")))!;
+            Assert.Equal("1.0.0.2", published["regions"]!["tw"]!["resource_version"]!.GetValue<string>());
+            Assert.Equal("1.0.0.2", published["regions"]!["tw"]!["catalog_version"]!.GetValue<string>());
+            Assert.Equal("current", Assert.Single((await restarted.CheckVersions()).Regions).Action);
+
             // A missing new catalog must fail, never quietly use catalog_main.
             version = "1.0.0.3";
             var missing = await restarted.WaitRelease((await restarted.CheckVersions()).Regions[0].Release!).WaitAsync(TimeSpan.FromSeconds(60));

@@ -85,4 +85,5 @@ allow_loopback_http = false
 # jp_api_origin = "https://api.bang-dream-on.jp"
 # jp_cdn_origin = "https://static.bang-dream-on.jp"
 # Optional HTTP(S) proxy for JP API/CDN requests only. Do not use a SOCKS URL here.
+# MOENOTES_JP_PROXY, MOENOTES_JP_PROXY_USER and MOENOTES_JP_PROXY_PASSWORD take precedence when set.
 # jp_proxy = "http://host.docker.internal:7890"

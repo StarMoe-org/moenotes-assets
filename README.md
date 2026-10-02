@@ -186,6 +186,12 @@ Then set this in the mounted `config.toml`:
 jp_proxy = "http://host.docker.internal:7890"
 ```
 
+Managed panels can set `MOENOTES_JP_PROXY=http://host.docker.internal:7890`
+instead; the environment variable takes precedence over `jp_proxy`. For an
+authenticated proxy, also set `MOENOTES_JP_PROXY_USER` and
+`MOENOTES_JP_PROXY_PASSWORD`. Keep `MOENOTES_API_KEY` as the existing
+administrative API key.
+
 On platforms that do not provide `host-gateway` or do not expose the host
 network to the container, use a reachable host/LAN address or a separately
 reachable proxy service instead. Do not point the setting at `127.0.0.1` from

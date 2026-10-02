@@ -56,11 +56,19 @@ public sealed record Config
     public string JpApiOrigin { get; init; } = "https://api.bang-dream-on.jp";
     public string JpCdnOrigin { get; init; } = "https://static.bang-dream-on.jp";
     public string JpProxy { get; init; } = "";
+    public string JpProxyUser { get; init; } = "";
+    public string JpProxyPassword { get; init; } = "";
     public static Config Load(string path)
     {
         var table = Toml.ToModel(File.ReadAllText(path));
         var config = JsonSerializer.Deserialize<Config>(JsonSerializer.Serialize(table), Json.Strict)
             ?? throw new InvalidDataException("Empty configuration");
+        var proxy = Environment.GetEnvironmentVariable("MOENOTES_JP_PROXY");
+        if (proxy != null) config = config with { JpProxy = proxy };
+        var proxyUser = Environment.GetEnvironmentVariable("MOENOTES_JP_PROXY_USER");
+        if (proxyUser != null) config = config with { JpProxyUser = proxyUser };
+        var proxyPassword = Environment.GetEnvironmentVariable("MOENOTES_JP_PROXY_PASSWORD");
+        if (proxyPassword != null) config = config with { JpProxyPassword = proxyPassword };
         config.Validate();
         var directory = Path.GetDirectoryName(Path.GetFullPath(path))!;
         return config with
@@ -103,6 +111,9 @@ public sealed record Config
             Require(uri.AbsolutePath == "/", "JP endpoints must be origins");
         }
         if (JpProxy.Length > 0) _ = JpProxyUri();
+        Require((JpProxyUser.Length == 0) == (JpProxyPassword.Length == 0), "jp_proxy_user and jp_proxy_password must be provided together");
+        Require(JpProxy.Length > 0 || (JpProxyUser.Length == 0 && JpProxyPassword.Length == 0), "JP proxy credentials require jp_proxy");
+        Require(!JpProxyUser.Any(char.IsControl) && !JpProxyPassword.Any(char.IsControl), "Invalid JP proxy credentials");
         Require(VersionPollSecs == 0 || VersionPollSecs is >= 60 and <= 86400, "version_poll_secs must be 0 or 60 to 86400");
         foreach (var name in Regions.Select(r => r.MetadataRegion).Append(MetadataRegion).OfType<string>())
             Require(name.Length <= 64 && name.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-'), "Invalid metadata_region");

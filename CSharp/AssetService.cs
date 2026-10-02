@@ -62,11 +62,14 @@ public sealed partial class AssetService : IAsyncDisposable
             Console.Error.WriteLine($"[startup] storage recovery {string.Join(' ', phases)}");
             http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false, AutomaticDecompression = DecompressionMethods.None }) { Timeout = Timeout.InfiniteTimeSpan };
             var jpProxy = Config.JpProxyUri();
+            var jpProxyHandler = jpProxy == null ? null : new WebProxy(jpProxy);
+            if (jpProxyHandler != null && Config.JpProxyUser.Length > 0)
+                jpProxyHandler.Credentials = new NetworkCredential(Config.JpProxyUser, Config.JpProxyPassword);
             jpHttp = new HttpClient(new SocketsHttpHandler
             {
                 AllowAutoRedirect = false,
                 UseProxy = jpProxy != null,
-                Proxy = jpProxy == null ? null : new WebProxy(jpProxy),
+                Proxy = jpProxyHandler,
                 AutomaticDecompression = DecompressionMethods.None
             }) { Timeout = Timeout.InfiniteTimeSpan };
             downloads = new(config.Downloads); workers = new(config.Workers); videos = new(config.Videos); queue = new(config.QueueLimit);
