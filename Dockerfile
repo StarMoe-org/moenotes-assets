@@ -17,7 +17,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS runtime
 ENV ASPNETCORE_HTTP_PORTS=
 # playfetch keeps its account store and session cache on the data volume.
 ENV XDG_CONFIG_HOME=/data/.config XDG_CACHE_HOME=/data/.cache
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg tini \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg tini \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir /data && chown 65532:65532 /data
 WORKDIR /app

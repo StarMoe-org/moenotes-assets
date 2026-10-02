@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -47,6 +48,8 @@ public sealed partial class AssetService
         public override string ToString() => "[JP CDN credential]";
     }
 
+    private sealed record JpVersionResponse(HttpStatusCode StatusCode, Dictionary<string, string> Headers, byte[] Body);
+
     // Public only to make the selection contract independently testable. No live
     // fallback is allowed when the live array exists but has no applicable entry.
     public static (string Version, string Hash) SelectJpAsset(string raw, string clientVersion)
@@ -83,23 +86,13 @@ public sealed partial class AssetService
         try
         {
             if (jpCredentials.TryGetValue(key, out var existing) && existing != rejected && Now - existing.Created < 300) return existing;
-            using var request = new HttpRequestMessage(HttpMethod.Post, source.ApiRoot + "/app.masterdata.MasterdataService/Version")
-            {
-                Version = HttpVersion.Version20,
-                VersionPolicy = HttpVersionPolicy.RequestVersionExact,
-                Content = new ByteArrayContent(new byte[5]) // uncompressed empty protobuf message
-            };
-            request.Content.Headers.ContentType = new("application/grpc");
-            request.Headers.Add("te", "trailers"); request.Headers.Add("x-platform", "android");
-            request.Headers.Add("x-client-version", source.ClientVersion); request.Headers.Add("x-request-id", Guid.NewGuid().ToString());
-            using var response = await jpHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
-            Require(response.StatusCode == HttpStatusCode.OK, $"JP Version HTTP {(int)response.StatusCode}");
-            var body = await ReadResponse(response, 65536, token);
-            string? Header(string name) => response.Headers.TryGetValues(name, out var values) ? values.SingleOrDefault() :
-                response.TrailingHeaders.TryGetValues(name, out values) ? values.SingleOrDefault() : null;
+            var version = await GetJpVersion(source, token);
+            Require(version.StatusCode == HttpStatusCode.OK, $"JP Version HTTP {(int)version.StatusCode}");
+            var body = version.Body;
+            string? Header(string name) => version.Headers.TryGetValue(name, out var value) ? value : null;
             // Error text/metadata may contain credentials. Only emit fixed classifications.
             Require(Header("grpc-status") == "0", "JP Version rejected; check client version or maintenance");
-            Require(response.Content.Headers.ContentType?.MediaType == "application/grpc" && body.Length >= 5 && body[0] == 0 &&
+            Require(Header("content-type")?.Split(';')[0].Trim() == "application/grpc" && body.Length >= 5 && body[0] == 0 &&
                 BinaryPrimitives.ReadUInt32BigEndian(body.AsSpan(1, 4)) == body.Length - 5, "Invalid JP Version frame");
             Require(Header("x-sirius-env")?.TrimEnd('/') == Config.JpCdnOrigin.TrimEnd('/'), "Unapproved JP CDN origin");
             var password = Header("x-sirius-cred") ?? "";
@@ -114,6 +107,75 @@ public sealed partial class AssetService
             return credential;
         }
         finally { jpAuthGate.Release(); }
+    }
+
+    private async Task<JpVersionResponse> GetJpVersion(JpAssetSource source, CancellationToken token)
+    {
+        var proxy = Config.JpProxyUri();
+        if (proxy == null)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, source.ApiRoot + "/app.masterdata.MasterdataService/Version")
+            {
+                Version = HttpVersion.Version20,
+                VersionPolicy = HttpVersionPolicy.RequestVersionExact,
+                Content = new ByteArrayContent(new byte[5])
+            };
+            request.Content.Headers.ContentType = new("application/grpc");
+            request.Headers.Add("te", "trailers"); request.Headers.Add("x-platform", "android");
+            request.Headers.Add("x-client-version", source.ClientVersion); request.Headers.Add("x-request-id", Guid.NewGuid().ToString());
+            using var response = await jpHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+            var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in response.Headers) headers[pair.Key] = string.Join(",", pair.Value);
+            foreach (var pair in response.Content.Headers) headers[pair.Key] = string.Join(",", pair.Value);
+            var body = await ReadResponse(response, 65536, token);
+            foreach (var pair in response.TrailingHeaders) headers[pair.Key] = string.Join(",", pair.Value);
+            return new(response.StatusCode, headers, body);
+        }
+
+        var directory = Path.Combine(Config.DataDir, "tmp", "jp-version-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var headersPath = Path.Combine(directory, "headers");
+        var bodyPath = Path.Combine(directory, "body");
+        try
+        {
+            var start = new ProcessStartInfo("curl")
+            {
+                UseShellExecute = false,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            foreach (var argument in new[]
+            {
+                "--silent", "--show-error", "--http2", "--request", "POST", "--proxy", proxy.AbsoluteUri,
+                "--header", "content-type: application/grpc", "--header", "te: trailers",
+                "--header", "x-platform: android", "--header", "x-client-version: " + source.ClientVersion,
+                "--header", "x-request-id: " + Guid.NewGuid(), "--data-binary", "@-",
+                "--dump-header", headersPath, "--output", bodyPath, "--write-out", "%{http_code}",
+                source.ApiRoot + "/app.masterdata.MasterdataService/Version"
+            }) start.ArgumentList.Add(argument);
+            if (Config.JpProxyUser.Length > 0) start.ArgumentList.Insert(7, "--proxy-user");
+            if (Config.JpProxyUser.Length > 0) start.ArgumentList.Insert(8, Config.JpProxyUser + ":" + Config.JpProxyPassword);
+            using var process = Process.Start(start) ?? throw new InvalidDataException("JP Version transport failed");
+            await process.StandardInput.BaseStream.WriteAsync(new byte[5], token);
+            process.StandardInput.Close();
+            var statusText = await process.StandardOutput.ReadToEndAsync(token);
+            _ = await process.StandardError.ReadToEndAsync(token);
+            await process.WaitForExitAsync(token);
+            Require(process.ExitCode == 0, "JP Version transport failed");
+            Require(int.TryParse(statusText.Trim(), out var status), "JP Version transport failed");
+            var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var line in File.ReadLines(headersPath))
+            {
+                var separator = line.IndexOf(':');
+                if (separator > 0) headers[line[..separator]] = line[(separator + 1)..].Trim();
+            }
+            var info = new FileInfo(bodyPath);
+            Require(info.Length <= 65536, "Response size limit");
+            return new((HttpStatusCode)status, headers, await File.ReadAllBytesAsync(bodyPath, token));
+        }
+        finally { RemoveTree(directory); }
     }
 
     private async Task<HttpResponseMessage> SendAsset(Uri uri, JpAssetSource? source, bool catalog, CancellationToken token)
