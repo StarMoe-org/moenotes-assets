@@ -138,4 +138,29 @@ public class BatchQueueTests
         Assert.Contains("404", batch.Steps[0].Error!);
         await cdn.StopAsync();
     }
+
+    [Fact]
+    public async Task ReleaseExportScansItsDownloadsAndDefersTheScanTask()
+    {
+        using var dir = new TempDirectory(); var fixture = Fixture.Create(); var downloads = 0;
+        var builder = WebApplication.CreateBuilder(); builder.Logging.ClearProviders(); builder.WebHost.UseUrls("http://127.0.0.1:0");
+        await using var cdn = builder.Build();
+        cdn.MapGet("/asset/Android/{file}", (string file) =>
+        {
+            if (file.EndsWith(".hash")) return Results.Text("hash");
+            if (file.EndsWith(".bin")) return Results.Bytes(fixture.Catalog);
+            Interlocked.Increment(ref downloads); return Results.Bytes(fixture.Bundle);
+        });
+        await cdn.StartAsync();
+        await using var service = new AssetService(new Config { DataDir = dir.Path, CdnRoot = Address(cdn), Locale = "en", Locales = ["en"], AllowLoopbackHttp = true });
+        service.EnableAutomaticBundleScan();
+        var batch = await Finish(service, service.StartBatch(new()).Id);
+        Assert.Equal("succeeded", batch.State);
+        // The export indexed the bundle it downloaded, so the scan task deferred behind the batch has nothing to fetch.
+        Assert.Equal(1, downloads);
+        Assert.Empty(service.Store.PendingBundleScans());
+        Assert.DoesNotContain(service.Store.All<TaskInfo>("task"), t => t.Kind == "bundle_scan");
+        Assert.Contains(service.Store.Contents(batch.Steps[0].Snapshot!, null, null, 0, 100).Contents, c => c.Path == Fixture.Internal);
+        await cdn.StopAsync();
+    }
 }

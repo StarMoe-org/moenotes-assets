@@ -6,16 +6,22 @@ public sealed partial class AssetService
     private string? activeScanId;
     private bool automaticBundleScan;
     private bool scanFollowupQueued;
+    private readonly HashSet<string> inlineScans = new(StringComparer.Ordinal);
 
     public void EnableAutomaticBundleScan()
     {
         automaticBundleScan = true;
-        if (Store.PendingBundleScans().Length > 0) _ = StartBundleScan();
+        ContinueAutomaticBundleScan();
     }
 
+    /// <summary>
+    /// Starts the automatic scan of unscanned bundles. It waits for queued and running batches: their exports scan the
+    /// bundles they download (ScanDownloaded), and the batch runner calls this again once the queue drains.
+    /// </summary>
     private void ContinueAutomaticBundleScan()
     {
-        if (shutdown.IsCancellationRequested || !automaticBundleScan || Store.PendingBundleScans().Length == 0) return;
+        if (shutdown.IsCancellationRequested || !automaticBundleScan || Store.All<BatchInfo>("batch").Any(b => b.State is "queued" or "running")) return;
+        if (Store.PendingBundleScans().Length == 0) return;
         lock (scanGate)
         {
             if (activeScanId != null && GetTask(activeScanId) is { State: "queued" or "running" })
@@ -59,6 +65,7 @@ public sealed partial class AssetService
                     {
                         if (token.IsCancellationRequested) break;
                         attempted.Add(target.BundleId);
+                        if (Store.BundleScanned(target.BundleId)) { succeeded++; continue; } // Scanned by an export meanwhile.
                         var stage = Path.Combine(Config.DataDir, "tmp", "scan-" + Guid.NewGuid().ToString("N"));
                         try
                         {
@@ -97,6 +104,31 @@ public sealed partial class AssetService
             });
             activeScanId = started.Id;
             return started;
+        }
+    }
+
+    /// <summary>
+    /// Scans the bundles an export has downloaded and the bundle index lacks, so the scan task needs no second download.
+    /// A failure is only logged: the scan task retries that bundle with its own download.
+    /// </summary>
+    private async Task ScanDownloaded(Snapshot snapshot, IEnumerable<Download> downloads, CancellationToken token)
+    {
+        foreach (var download in downloads)
+        {
+            var bundleId = BundleIdentity.Id(download.Input.Location);
+            lock (scanGate) if (Store.BundleScanned(bundleId) || !inlineScans.Add(bundleId)) continue;
+            var stage = Path.Combine(Config.DataDir, "tmp", "scan-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Directory.CreateDirectory(stage);
+                await workers.WaitAsync(token);
+                BundleContentItem[] contents;
+                try { contents = await Processes.ScanBundle(new(Config.ForSnapshot(snapshot), download.Input.Location, [download.Input], Path.Combine(stage, "out")), stage, token); }
+                finally { workers.Release(); }
+                Store.SaveBundleScan(bundleId, download.PlainHash, contents);
+            }
+            catch (Exception error) when (error is not OperationCanceledException) { Console.Error.WriteLine($"[scan] export-side scan failed bundle={bundleId}: {error.Message}"); }
+            finally { lock (scanGate) inlineScans.Remove(bundleId); RemoveTree(stage); }
         }
     }
 }

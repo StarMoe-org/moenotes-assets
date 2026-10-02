@@ -89,6 +89,7 @@ public sealed partial class AssetService
 
     public BatchInfo CancelBatch(string id)
     {
+        BatchInfo cancelled;
         lock (batchGate)
         {
             var batch = GetBatch(id);
@@ -102,8 +103,11 @@ public sealed partial class AssetService
             Store.Put("batch", id, batch);
             if (batchCancellations.TryGetValue(id, out var cancellation)) cancellation.Cancel();
             Console.Error.WriteLine($"[batch {id}] cancelled");
-            return batch;
+            cancelled = batch;
         }
+        // A queued batch never reaches the runner's finish, which resumes the deferred bundle scan.
+        ContinueAutomaticBundleScan();
+        return cancelled;
     }
 
     private async Task ProcessBatches()
@@ -139,6 +143,7 @@ public sealed partial class AssetService
                 }
                 finally { lock (batchGate) batchCancellations.Remove(id); }
                 FinalizeRelease(id);
+                ContinueAutomaticBundleScan();
             }
         }
         catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { }

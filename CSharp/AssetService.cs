@@ -410,6 +410,8 @@ public sealed partial class AssetService : IAsyncDisposable
             reservation = await Budget.ReserveAsync(locations.Sum(l => l.Options!.Size) + Config.OutputBytes + Config.ExpandedBytes * 2, token);
             foreach (var location in locations)
                 leases.Add(await downloadWork.Join(snapshot.Id + ":" + location.Id, ct => DownloadOne(snapshot, location, ct), token));
+            // Index new bundles while they are on disk; the automatic scan waits for the release and then skips them.
+            if (automaticBundleScan) await ScanDownloaded(snapshot, leases.Select(l => l.Value), token);
             var selectedConfig = Config.ForSnapshot(snapshot);
             var cri = locations.Length == 1 && locations[0].Provider == Catalog.Cri;
             var conversionId = Crypto.Identity(profile, cri ? "cri" : target.Internal, cri ? "cri" : target.ResourceType,

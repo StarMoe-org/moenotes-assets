@@ -32,6 +32,8 @@ public sealed partial class Store
         }
     }
 
+    public bool BundleScanned(string bundleId) { lock (gate) return Scalar("SELECT COUNT(*) FROM bundle_scans WHERE bundle_id=$id", ("$id", bundleId)) > 0; }
+
     public void SaveBundleScan(string bundleId, string plainSha256, BundleContentItem[] entries)
     {
         Config.Require(entries.Length <= 100000, "Bundle content limit");

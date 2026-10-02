@@ -188,6 +188,8 @@ The service is API-only; an external asset browser uses `/regions`, `/catalogs`,
 each remote bundle once to record UnityFS and AssetBundle container paths. Missing
 bundles scan in the background when serving starts, and progress survives restarts.
 The first scan downloads bundle bytes but does not retain them or re-export media.
+During a release, exports scan the new bundles they download and the background
+scan waits for the batch queue to drain, so a changed bundle is downloaded once.
 Version/region/language catalog comparisons still use the metadata index. See
 [API contract](docs/API.md) and [live acceptance](docs/LIVE_ACCEPTANCE.md).
 

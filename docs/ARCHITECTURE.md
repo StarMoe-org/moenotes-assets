@@ -81,6 +81,9 @@ An isolated scan worker reads each missing remote bundle, records UnityFS direct
 entries and AssetBundle `m_Container` paths, and commits each bundle atomically.
 Interrupted scans resume by skipping committed bundle IDs. Raw downloads are
 released after scanning; local game dependencies cannot be scanned remotely.
+An export scans the unscanned bundles it has just downloaded before converting, and
+the automatic scan task defers while batches are queued or running, then picks up
+only what exports did not cover (skipped keys, failed scans).
 
 Publication validates worker outputs and moves each into `blobs/<prefix>/<sha256>`.
 Per-export manifests and per-file records preserve scope identities; both live only in SQLite (file records
