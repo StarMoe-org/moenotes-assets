@@ -87,7 +87,9 @@ public sealed partial class Store
                 using var reader = dirs.ExecuteReader();
                 while (reader.Read()) { var path = reader.GetString(0); folders.Add(new(path, path[(directory.Length == 0 ? 0 : directory.Length + 1)..])); }
             }
-            var filter = "b.content_id=$c AND c.kind<>'unity_file' AND ($query='' AND c.parent=$parent OR $query<>'' AND instr(lower(c.path),lower($query))>0 AND ($prefix='' OR c.path >= $prefix AND substr(c.path,1,length($prefix))=$prefix))";
+            // One file per bundle path: m_Container can map a path to several objects (a sprite's Texture2D and Sprite).
+            var filter = "b.content_id=$c AND c.kind<>'unity_file' AND ($query='' AND c.parent=$parent OR $query<>'' AND instr(lower(c.path),lower($query))>0 AND ($prefix='' OR c.path >= $prefix AND substr(c.path,1,length($prefix))=$prefix))"
+                + " AND NOT EXISTS(SELECT 1 FROM bundle_contents e WHERE e.path=c.path AND e.bundle_id=c.bundle_id AND e.ordinal<c.ordinal AND e.kind<>'unity_file')";
             var args = new[] { ("$c", (object)content), ("$parent", (object)directory), ("$prefix", (object)(directory.Length == 0 ? "" : directory + "/")), ("$query", (object)query), ("$limit", (object)limit), ("$offset", (object)offset) };
             var total = Scalar("SELECT COUNT(*) FROM bundle_contents c JOIN bundles b ON b.id=c.bundle_id WHERE " + filter, args);
             var order = descending ? "DESC" : "ASC";

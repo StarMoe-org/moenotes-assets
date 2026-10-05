@@ -83,4 +83,25 @@ public class BundleContentsTests
             Assert.Equal(Fixture.Internal, Assert.Single(store.Contents(snapshot.Id, null, null, 0, 100).Contents).Path);
         }
     }
+
+    [Fact]
+    public void BrowseListsEachBundlePathOnce()
+    {
+        using var dir = new TempDirectory();
+        var catalog = Catalog.Parse(Fixture.Catalog(Fixture.Bundle().Length, ~BinaryTools.Crc32(Fixture.Serialized())));
+        var bundleId = BundleIdentity.Id(Assert.Single(catalog.Closure(Fixture.Key)));
+        var snapshot = new Snapshot("sprite-snapshot", Crypto.Identity("sprite-content"), "tw", "en", "main", "https://cdn.invalid", "", 1);
+        using var store = new Store(dir.Path);
+        store.IndexSnapshot(snapshot, catalog);
+        // A sprite texture's path names both its Texture2D and its Sprite object.
+        store.SaveBundleScan(bundleId, "plain-sha", [new("CAB-fixture", "unity_file", "", null), new(Fixture.Internal, "asset", "CAB-fixture", 7), new(Fixture.Internal, "asset", "CAB-fixture", 8)]);
+
+        var page = store.Browse(snapshot.Id, "Assets", null, 0, 100);
+        Assert.Equal(1, page.Total);
+        Assert.Equal("7", Assert.Single(page.Files).PathId);
+        var search = store.Browse(snapshot.Id, "", "fixture", 0, 100);
+        Assert.Equal(1, search.Total);
+        Assert.Equal("7", Assert.Single(search.Files).PathId);
+        Assert.Equal(["7", "8"], store.Contents(snapshot.Id, null, bundleId, 0, 100).Contents.Select(c => c.PathId));
+    }
 }
