@@ -16,7 +16,8 @@ public sealed record Config
     public int Videos { get; init; } = 1;
     public int FfmpegThreads { get; init; } = 4;
     public int QueueLimit { get; init; } = 128;
-    public int MaxKeys { get; init; } = 50_000;
+    // One catalog may exceed 50k keys (1.1.0 has 50,281); keep a bounded but larger default.
+    public int MaxKeys { get; init; } = 200_000;
     public long TempBytes { get; init; } = 20L << 30;
     public long InputBytes { get; init; } = 1L << 30;
     public long OutputBytes { get; init; } = 2L << 30;
@@ -83,7 +84,7 @@ public sealed record Config
         Require(IPEndPoint.TryParse(Listen, out _), "Invalid listen endpoint");
         foreach (var (name, value, max) in new[] { ("downloads", Downloads, 64), ("workers", Workers, 16),
                      ("videos", Videos, 16), ("ffmpeg_threads", FfmpegThreads, 64),
-                     ("queue_limit", QueueLimit, 4096), ("max_keys", MaxKeys, 50000) })
+                     ("queue_limit", QueueLimit, 4096), ("max_keys", MaxKeys, 500_000) })
             Require(value > 0 && value <= max, $"Invalid {name}");
         foreach (var size in new[] { TempBytes, InputBytes, OutputBytes, ExpandedBytes, WorkerMemoryBytes })
             Require(size >= 1 << 20 && size <= 1L << 40, "Invalid byte budget");

@@ -20,6 +20,13 @@ changes require explicit release notes; a frozen stable API is not claimed.
 
 ## 0.2.0-csharp (unreleased)
 
+- Raise `max_keys` to 200,000 (validated up to 500,000). The 1.1.0 international catalog has 50,281 keys, so the
+  default 50,000 rejected a full-prefix export (`Empty or excessive selection`) before `UniqueKeys` reduced it to
+  the ~32,500 actual targets; batch/`update` exports failed as soon as the catalog crossed the limit.
+- Verify cached bytes and isolate download provenance: existing blobs and published files are checked against their
+  SHA-256 and size, and unchanged-export reuse no longer carries input verification across a different CDN root or
+  region.
+
 - Shrink storage: stop writing never-read `exports/{id}/manifest.json` copies and storing file metadata twice in
   file records; startup removes both from older data in the background and prunes finished tasks after seven days
   (keeping the export tasks the next release diff needs). Export progress checkpoints no longer rewrite every
