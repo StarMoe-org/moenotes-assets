@@ -71,7 +71,8 @@ public sealed partial class AssetService : IAsyncDisposable
                 UseProxy = jpProxy != null,
                 Proxy = jpProxyHandler,
                 AutomaticDecompression = DecompressionMethods.None
-            }) { Timeout = Timeout.InfiniteTimeSpan };
+            })
+            { Timeout = Timeout.InfiniteTimeSpan };
             downloads = new(config.Downloads); workers = new(config.Workers); videos = new(config.Videos); queue = new(config.QueueLimit);
             Budget = new(config.TempBytes);
             downloadWork = new(d => RemoveTree(d.Directory));

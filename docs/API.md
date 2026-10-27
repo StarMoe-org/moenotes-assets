@@ -154,8 +154,12 @@ Each file has `path`, `kind`, `source`, `path_id`, `bundle_id`, and `bundle_key`
 `path_id` is a decimal string (or null) to preserve Unity's 64-bit value.
 `kind=asset` comes from the Unity AssetBundle `m_Container`; `kind=payload`
 represents a raw CRI resource. The `source` of an asset is its serialized UnityFS
-file. `/bundles/{id}/contents` also includes `kind=unity_file` entries from the
-outer UnityFS directory. These are actual observed container entries, unlike
+file. A path appears once per bundle: when `m_Container` maps it to several
+objects (a sprite's `Texture2D` and `Sprite`), the file carries the first
+entry's `source` and `path_id`, and `total` counts it once.
+`/bundles/{id}/contents` lists every container entry and also includes
+`kind=unity_file` entries from the outer UnityFS directory. These are actual
+observed container entries, unlike
 `/bundles/{id}/assets`, which lists all catalog assets depending on a bundle.
 
 `/scan/status` returns `{snapshot,total,scanned,entries,local_bundles,failed}`. The

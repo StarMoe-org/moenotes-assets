@@ -27,6 +27,9 @@ changes require explicit release notes; a frozen stable API is not claimed.
 - Download each changed bundle once per release: exports index the bundle contents they download, and the automatic
   bundle scan waits for queued and running batches instead of fetching the same bundles in parallel.
 
+- `/browse` lists each path once per bundle. A sprite texture's `Texture2D` and `Sprite` share one `m_Container`
+  path and no longer appear as two files; `/bundles/{id}/contents` still lists every container entry.
+
 - Fix international updates continuing to download `catalog_main` after
   `resource_version` changed. Pin the release's version and CDN roots through
   catalog refresh, all-language batches and restart recovery; preserve existing
